@@ -91,7 +91,7 @@ class DailyReportAnalysisAPI(Star):
     async def get_stillalive_report(self, event: AstrMessageEvent, date: str = None):
         """获取并发送指定日期的日报图片。格式: stillalive日报 [YYYY-MM-DD]"""
         if not self._check_permission(event):
-            yield event.plain_result("抱歉，您没有权限执行此指令。")
+            yield event.plain_result("只有获得授权的勇者才能使用这个技能呢。爱丽丝感到很抱歉！")
             return
 
         if not date:
@@ -102,20 +102,25 @@ class DailyReportAnalysisAPI(Star):
             datetime.strptime(date, "%Y-%m-%d")
         except ValueError:
             yield event.plain_result(
-                "日期格式错误，请使用 YYYY-MM-DD 格式，例如: stillalive日报 2026-05-03"
+                "呜哇，任务失败了。爱丽丝无法识别这个日期格式，请使用 YYYY-MM-DD 格式（例如：stillalive日报 2026-05-03）再试一次吧！"
             )
             return
 
-        yield event.plain_result(f"正在获取 {date} 的日报并生成图片，请稍候...")
+        yield event.plain_result(f"爱丽丝收到任务！正在努力同步 {date} 的冒险日志并生成图片，请勇者稍等一下哦！")
 
         report_data = await self.api_service.fetch_report(date)
-        if not report_data or report_data.get("error"):
-            error_msg = (
-                report_data.get("error", "接口返回异常")
-                if report_data
-                else "无法连接至服务器"
-            )
-            yield event.plain_result(f"获取日报失败: {error_msg}")
+        if not report_data:
+            yield event.plain_result(f"连接冒险数据库失败！爱丽丝无法获取 {date} 的日报信息，请检查网络连接！")
+            return
+
+        # 检查错误字段 (包含 error 和 detail)
+        error_msg = report_data.get("error") or report_data.get("detail")
+        if error_msg:
+            # 针对性提示：日报不存在
+            if "日报不存在" in error_msg or "No DailyReport matches" in error_msg:
+                yield event.plain_result(f"寻找任务目标失败。在 {date} 的地图里没有找到任何日报记录呢，爱丽丝建议勇者再等一等！")
+            else:
+                yield event.plain_result(f"获取日报时触发了未知陷阱：{error_msg}。爱丽丝正在尝试修复！")
             return
 
         image_path = await ReportHandler.render_report(report_data)
@@ -130,12 +135,12 @@ class DailyReportAnalysisAPI(Star):
                     base64_str = base64.b64encode(img_bytes).decode('utf-8')
                     yield event.chain_result([Image.fromBase64(base64_str)])
                 else:
-                    yield event.plain_result(f"错误：渲染出的图片文件不存在。")
+                    yield event.plain_result("寻找道具失败！爱丽丝渲染出的图片文件在背包里找不到了。")
             except Exception as e:
                 logger.error(f"发送 Base64 图片失败: {e}")
-                yield event.plain_result(f"发送图片失败: {e}")
+                yield event.plain_result(f"爱丽丝在传送图片时被干扰了：{e}")
         else:
-            yield event.plain_result("图片生成失败，请检查日志。")
+            yield event.plain_result("爱丽丝在渲染图片时 MP 不足了……生成图片失败，请检查冒险日志（后台日志）！")
 
     @filter.command("stillalive群总结")
     async def manual_group_summary(self, event: AstrMessageEvent):

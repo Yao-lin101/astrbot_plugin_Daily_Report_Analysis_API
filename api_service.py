@@ -36,9 +36,15 @@ class APIService:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    else:
+                    # 无论状态码是多少，只要有内容就尝试解析 JSON
+                    try:
+                        res_data = await response.json()
+                        if response.status == 200:
+                            return res_data
+                        else:
+                            # 即使不是 200，也将错误信息返回给上层处理
+                            return res_data
+                    except Exception:
                         logger.error(
                             f"APIService: 获取日报失败，状态码：{response.status}"
                         )
