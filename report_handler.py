@@ -32,7 +32,8 @@ HTML_TEMPLATE = """
             background-color: white;
             margin: 0;
             padding: 0;
-            display: block;
+            width: 600px; /* 强制宽度，消除留白 */
+            font-size: 16px;
         }
 
         .container {
@@ -172,15 +173,11 @@ class ReportHandler:
         tmpl_data = {"date": date, "is_hidden": is_hidden, "report_html": report_html}
 
         try:
-            # 切换到本地渲染策略，避开远程服务器 404 或网络问题
-            # 本地渲染会自动处理 viewport 和高清缩放
-            image_path = await html_renderer.local_strategy.render_custom_template(
+            # 回退到标准渲染调用，移除不支持的 viewport 参数
+            # 留白问题将通过 CSS 中的 body { width: 600px; } 来解决
+            image_path = await html_renderer.render_custom_template(
                 HTML_TEMPLATE, 
-                tmpl_data,
-                options={
-                    "viewport": {"width": 600, "height": 1000},
-                    "device_scale_factor": 2 # 2倍采样，保证超高清
-                }
+                tmpl_data
             )
             return image_path
         except Exception as e:
