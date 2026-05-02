@@ -13,7 +13,7 @@ from astrbot.api.star import Context, Star, register
     "astrbot_plugin_Daily_Report_Analysis_API",
     "e.e.",
     "联动StillAlive发送每日群聊以及与AI机器人私聊的消息汇总",
-    "1.1.3",
+    "1.1.4",
 )
 class DailyReportAnalysisAPI(Star):
     def __init__(self, context: Context, config: dict = None):
@@ -239,7 +239,7 @@ class DailyReportAnalysisAPI(Star):
         messages = self.group_messages_map.get(group_id, [])
         last_id = self.last_summarized_id.get(group_id, 0)
 
-        # 1. 提取所有尚未总结的新消息（包括之前的顺延内容）
+        # 1. 提取所有尚未总结的新消息
         pending = [m for m in messages if m["id"] > last_id]
         if not pending:
             self.active_groups.discard(group_id)
@@ -258,7 +258,7 @@ class DailyReportAnalysisAPI(Star):
             self.active_groups.discard(group_id)
             return
 
-        # 3. 准备发送给 LLM 的内容：包含顺延出的所有后续消息
+        # 3. 准备内容
         to_summarize = pending
 
         user_nickname = self.user_nicknames.get(group_id, "用户")
@@ -298,13 +298,19 @@ class DailyReportAnalysisAPI(Star):
                         system_prompt = persona_v3.get("prompt")
 
                 if not system_prompt:
-                    # 尝试获取全局默认人格
                     default_persona = (
                         await self.context.persona_manager.get_default_persona_v3()
                     )
                     system_prompt = default_persona.get("prompt")
 
-                prompt = f"以下是一段群聊记录，请精炼地总结这段对话的话题和主要内容（50字以内）：\n\n{dialogue_text}"
+                # 增加调试日志
+                logger.debug(
+                    f"DailyReportAnalysisAPI: 请求总结。使用人格 ID: {persona_id or '默认'}, 系统提示词长度: {len(system_prompt) if system_prompt else 0}"
+                )
+
+                # 强化 Prompt 指令，要求使用人设口吻
+                prompt = f"请以你的人设口吻，精炼地总结以下这段群聊记录的话题和主要内容（50字以内）：\n\n{dialogue_text}"
+
                 response = await self.context.llm_generate(
                     chat_provider_id=provider_id,
                     system_prompt=system_prompt,
@@ -334,7 +340,7 @@ class DailyReportAnalysisAPI(Star):
         }
         await self.send_to_api(data)
 
-        # 4. 快照 ID 推进到特定用户最后一次发言
+        # 4. 快照 ID 推进
         self.last_summarized_id[group_id] = pending[last_user_msg_index]["id"]
         self.active_groups.discard(group_id)
 
