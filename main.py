@@ -34,6 +34,9 @@ class DailyReportAnalysisAPI(Star):
         self.private_messages = []
         self.config = config
 
+        # 内部指令列表，用于更强健的过滤
+        self.internal_commands = ["stillalive群总结", "stillalive清理缓存"]
+
     async def initialize(self):
         """插件初始化"""
         if not self.config:
@@ -151,8 +154,12 @@ class DailyReportAnalysisAPI(Star):
         if not message_content:
             return
 
-        # 1. 排除用户指令
+        # 1. 强力排除指令：检查前缀或完全匹配内部指令名
         if message_content.startswith(("/", ".")):
+            return
+
+        clean_msg = message_content.strip()
+        if clean_msg in self.internal_commands:
             return
 
         specific_user_id = str(self.config.get("specific_user_id", ""))
@@ -268,7 +275,6 @@ class DailyReportAnalysisAPI(Star):
             event = self.group_events.get(group_id)
             if event:
                 try:
-                    # 某些平台支持通过 get_group() 获取成员信息
                     group_data = await event.get_group()
                     if group_data and group_data.members:
                         self_id = event.get_self_id()
@@ -280,7 +286,6 @@ class DailyReportAnalysisAPI(Star):
                 except Exception:
                     pass
 
-            # 如果还是没有，使用全局配置或默认值
             if not bot_nickname:
                 bot_nickname = self.context.get_config().get("nickname", "机器人")
 
@@ -312,7 +317,7 @@ class DailyReportAnalysisAPI(Star):
                         "时间": last_time,
                         "群名称": group_name,
                         "用户在本群昵称": user_nickname,
-                        "你在本群昵称": bot_nickname,  # 新增字段
+                        "你在本群昵称": bot_nickname,
                         "话题总结": summary,
                     }
                 ]
@@ -349,7 +354,6 @@ class DailyReportAnalysisAPI(Star):
             if event.message_obj.group and event.message_obj.group.group_name:
                 group_name = event.message_obj.group.group_name
 
-            # 记录此时机器人的 ID，尝试获取昵称
             bot_name = self.bot_nicknames.get(group_id)
             if not bot_name:
                 bot_name = self.context.get_config().get(
