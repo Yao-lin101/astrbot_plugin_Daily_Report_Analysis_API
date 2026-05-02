@@ -37,22 +37,18 @@ HTML_TEMPLATE = """
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background-color: #f1f5f9;
+            font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background-color: white; /* 统一背景色为白色，防止远程渲染出现边框色差 */
             margin: 0;
             padding: 0;
-            width: 100%;
         }
 
         .container {
             width: 100%;
-            max-width: 600px;
-            margin: 0 auto;
-            background: white;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+            background-color: white;
+            padding: 20px;
+            box-sizing: border-box;
+            zoom: 1.2; /* 适度缩放 */
         }
 
         .header {
