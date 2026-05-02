@@ -139,11 +139,16 @@ class DailyReportAnalysisAPI(Star):
                 if p.exists():
                     img_bytes = p.read_bytes()
                     base64_str = base64.b64encode(img_bytes).decode('utf-8')
-                    yield event.chain_result([Image.fromBase64(base64_str)])
+                    # 关键修改：在这里捕获 yield 导致的发送异常
+                    try:
+                        yield event.chain_result([Image.fromBase64(base64_str)])
+                    except Exception as e:
+                        logger.error(f"DailyReportAnalysisAPI: 图片发送动作失败: {e}")
+                        yield event.plain_result(self._get_resp("resp_image_transmit_error", error="富媒体上传失败，可能图片过大或网络异常。"))
                 else:
                     yield event.plain_result(self._get_resp("resp_image_file_not_found"))
             except Exception as e:
-                logger.error(f"发送 Base64 图片失败: {e}")
+                logger.error(f"处理图片 Base64 失败: {e}")
                 yield event.plain_result(self._get_resp("resp_image_transmit_error", error=str(e)))
         else:
             yield event.plain_result(self._get_resp("resp_render_error"))
