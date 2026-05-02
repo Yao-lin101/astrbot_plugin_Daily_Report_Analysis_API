@@ -57,59 +57,59 @@ class DailyReportAnalysisAPI(Star):
         specific_user_id = config.get('specific_user_id')
         
         if not specific_user_id:
+            logger.warning("插件 DailyReportAnalysisAPI: 未设置 specific_user_id，跳过消息处理。")
             return
         
         # 检查是否是特定用户
         sender_id = event.get_sender_id()
-        if sender_id != specific_user_id:
-            # 如果不是特定用户，检查是否是群聊中特定用户的消息
-            if event.message_obj.group_id:
-                # 记录群聊消息
-                for msg_component in event.message_obj.message:
-                    if hasattr(msg_component, 'type') and msg_component.type == 'Plain':
-                        message_content = getattr(msg_component, 'text', '')
-                        time_str = datetime.fromtimestamp(event.message_obj.timestamp).strftime("%H:%M")
-                        group_name = "未知群聊"
-                        # 尝试获取群名称（具体实现可能需要根据消息平台适配器调整）
-                        
-                        # 检查消息是否来自特定用户
-                        if sender_id == specific_user_id:
-                            role = "【用户】"
-                        else:
-                            role = "【群友】"
-                        
-                        # 查找或创建群聊消息记录
-                        found = False
-                        for msg_group in self.group_messages:
-                            if msg_group.get("群名称") == group_name:
-                                msg_group[f"{role}{event.get_sender_name()}"] = message_content
-                                found = True
-                                break
-                        
-                        if not found:
-                            new_msg_group = {
-                                "时间": time_str,
-                                "群名称": group_name,
-                                f"{role}{event.get_sender_name()}": message_content
-                            }
-                            self.group_messages.append(new_msg_group)
-            return
         
-        # 处理特定用户的私聊消息
-        if not event.message_obj.group_id:
-            # 记录用户消息
+        # 记录用户消息
+        if sender_id == specific_user_id:
+            message_content = ""
             for msg_component in event.message_obj.message:
                 if hasattr(msg_component, 'type') and msg_component.type == 'Plain':
-                    message_content = getattr(msg_component, 'text', '')
+                    message_content += getattr(msg_component, 'text', '')
+            
+            if not message_content:
+                return
+
+            time_str = datetime.fromtimestamp(event.message_obj.timestamp).strftime("%H:%M")
+
+            if not event.message_obj.group_id:
+                # 私聊消息
+                logger.info(f"DailyReportAnalysisAPI: 记录私聊消息 - {event.get_sender_name()}: {message_content}")
+                self.private_messages.append({
+                    "时间": time_str,
+                    "用户昵称": event.get_sender_name(),
+                    "用户消息": message_content,
+                    "机器人回复": ""
+                })
+            else:
+                # 群聊消息 (特定用户在群里说话)
+                logger.info(f"DailyReportAnalysisAPI: 记录群聊消息(特定用户) - {event.get_sender_name()}: {message_content}")
+                new_msg_group = {
+                    "时间": time_str,
+                    "群名称": "未知群聊",
+                    f"【用户】{event.get_sender_name()}": message_content
+                }
+                self.group_messages.append(new_msg_group)
+        else:
+            # 如果是群聊中其他人的消息
+            if event.message_obj.group_id:
+                message_content = ""
+                for msg_component in event.message_obj.message:
+                    if hasattr(msg_component, 'type') and msg_component.type == 'Plain':
+                        message_content += getattr(msg_component, 'text', '')
+                
+                if message_content:
                     time_str = datetime.fromtimestamp(event.message_obj.timestamp).strftime("%H:%M")
-                    # 记录用户消息，等待机器人回复
-                    self.private_messages.append({
+                    logger.info(f"DailyReportAnalysisAPI: 记录群聊消息(群友) - {event.get_sender_name()}: {message_content}")
+                    new_msg_group = {
                         "时间": time_str,
-                        "用户昵称": event.get_sender_name(),
-                        "用户消息": message_content,
-                        "机器人回复": ""
-                    })
-                    break
+                        "群名称": "未知群聊",
+                        f"【群友】{event.get_sender_name()}": message_content
+                    }
+                    self.group_messages.append(new_msg_group)
 
     @filter.after_message_sent()
     async def after_message_sent(self, event: AstrMessageEvent) -> None:
@@ -126,10 +126,13 @@ class DailyReportAnalysisAPI(Star):
         # 判断是群聊还是私聊并记录回复
         if event.message_obj.group_id:
             if self.group_messages and not self.group_messages[-1].get("机器人回复"):
+                logger.info(f"DailyReportAnalysisAPI: 记录机器人群聊回复 - {reply_text[:20]}...")
                 self.group_messages[-1]["机器人回复"] = reply_text
         else:
             if self.private_messages and not self.private_messages[-1].get("机器人回复"):
+                logger.info(f"DailyReportAnalysisAPI: 记录机器人私聊回复 - {reply_text[:20]}...")
                 self.private_messages[-1]["机器人回复"] = reply_text
+
 
 
     async def hourly_task(self):
