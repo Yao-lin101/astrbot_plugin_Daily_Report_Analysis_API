@@ -14,7 +14,7 @@ from astrbot.api.star import Context, Star, register
     "astrbot_plugin_Daily_Report_Analysis_API",
     "e.e.",
     "联动StillAlive发送每日群聊以及与AI机器人私聊的消息汇总",
-    "1.2.1",
+    "1.2.3",
 )
 class DailyReportAnalysisAPI(Star):
     def __init__(self, context: Context, config: dict = None):
@@ -52,20 +52,39 @@ class DailyReportAnalysisAPI(Star):
         """通过反射获取所有被 @filter.command 装饰的指令名"""
         self.internal_commands = []
         for name, method in inspect.getmembers(self, predicate=inspect.ismethod):
-            # 检查方法是否有 AstrBot 过滤器标记
-            # @filter.command 装饰后的方法会带有特定属性（如 _astr_filter_cmds 或类似标记）
             if hasattr(method, "__astr_filter__"):
                 filt = getattr(method, "__astr_filter__")
-                # 提取指令名
                 if hasattr(filt, "commands"):
                     self.internal_commands.extend(filt.commands)
 
-        # 兜底：如果自动获取失败（API变动），手动加入已知指令
         if not self.internal_commands:
             self.internal_commands = ["stillalive群总结", "stillalive清理缓存"]
         else:
-            # 去重
             self.internal_commands = list(set(self.internal_commands))
+
+    async def _get_bot_nickname(self, event: AstrMessageEvent, group_id: str) -> str:
+        """获取机器人在群组中的昵称"""
+        if group_id in self.bot_nicknames:
+            return self.bot_nicknames[group_id]
+
+        if event:
+            try:
+                group_data = await event.get_group()
+                if group_data and group_data.members:
+                    self_id = str(event.get_self_id())
+                    for m in group_data.members:
+                        if str(m.user_id) == self_id:
+                            nick = m.nickname or m.user_id
+                            self.bot_nicknames[group_id] = str(nick)
+                            return str(nick)
+            except Exception:
+                pass
+
+        # 兜底：从全局配置获取机器人昵称
+        nickname = self.context.get_config().get("nickname")
+        if not nickname and event:
+            nickname = str(event.get_self_id())
+        return str(nickname or "机器人")
 
     async def terminate(self):
         """插件销毁"""
@@ -208,6 +227,7 @@ class DailyReportAnalysisAPI(Star):
             self.message_id_counter[group_id] += 1
             msg_id = self.message_id_counter[group_id]
 
+            # 使用更具语义化的前缀
             msg_content_formatted = f"{prefix}{sender_name}: {message_content}"
             msg_obj = {
                 "id": msg_id,
@@ -283,23 +303,9 @@ class DailyReportAnalysisAPI(Star):
         to_summarize = pending
 
         user_nickname = self.user_nicknames.get(group_id, "用户")
-        bot_nickname = self.bot_nicknames.get(group_id)
-        if not bot_nickname:
-            event = self.group_events.get(group_id)
-            if event:
-                try:
-                    group_data = await event.get_group()
-                    if group_data and group_data.members:
-                        self_id = event.get_self_id()
-                        for m in group_data.members:
-                            if str(m.user_id) == str(self_id):
-                                bot_nickname = m.nickname
-                                self.bot_nicknames[group_id] = bot_nickname
-                                break
-                except Exception:
-                    pass
-            if not bot_nickname:
-                bot_nickname = self.context.get_config().get("nickname", "机器人")
+        # 获取机器人昵称
+        event = self.group_events.get(group_id)
+        bot_nickname = await self._get_bot_nickname(event, group_id)
 
         group_name = to_summarize[0].get("群名称", "未知群聊")
         last_time = to_summarize[-1].get("时间", "未知时间")
@@ -401,16 +407,14 @@ class DailyReportAnalysisAPI(Star):
                 else "未知群聊"
             )
 
-            bot_name = self.bot_nicknames.get(group_id)
-            if not bot_name:
-                bot_name = self.context.get_config().get(
-                    "nickname", event.get_self_id()
-                )
+            # 统一获取机器人名片
+            bot_name = await self._get_bot_nickname(event, group_id)
 
             self.message_id_counter[group_id] += 1
             msg_id = self.message_id_counter[group_id]
 
-            msg_content_formatted = f"【机器人】{bot_name}: {reply_text}"
+            # 使用第一人称语义的前缀，增强 LLM 代入感
+            msg_content_formatted = f"【你】{bot_name}: {reply_text}"
             msg_obj = {
                 "id": msg_id,
                 "时间": time_str,
