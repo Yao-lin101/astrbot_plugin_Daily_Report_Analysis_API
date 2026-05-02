@@ -32,8 +32,8 @@ HTML_TEMPLATE = """
             background-color: white;
             margin: 0;
             padding: 0;
-            width: 600px; /* 强制宽度，消除留白 */
-            font-size: 16px;
+            width: 100%; /* 撑满整张图片，解决左侧一半的问题 */
+            font-size: 20px; /* 进一步提升字号 */
         }
 
         .container {
@@ -173,11 +173,16 @@ class ReportHandler:
         tmpl_data = {"date": date, "is_hidden": is_hidden, "report_html": report_html}
 
         try:
-            # 回退到标准渲染调用，移除不支持的 viewport 参数
-            # 留白问题将通过 CSS 中的 body { width: 600px; } 来解决
+            # 渲染图片：尝试直接传递 width 参数，并保持 100 质量
             image_path = await html_renderer.render_custom_template(
                 HTML_TEMPLATE, 
-                tmpl_data
+                tmpl_data,
+                options={
+                    "quality": 100,
+                    "device_scale_factor": 2,
+                    "width": 600, 
+                    "height": 1000
+                }
             )
             return image_path
         except Exception as e:
