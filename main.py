@@ -13,7 +13,7 @@ from astrbot.api.star import Context, Star, register
     "astrbot_plugin_Daily_Report_Analysis_API",
     "e.e.",
     "联动StillAlive发送每日群聊以及与AI机器人私聊的消息汇总",
-    "1.1.5",
+    "1.1.7",
 )
 class DailyReportAnalysisAPI(Star):
     def __init__(self, context: Context, config: dict = None):
@@ -308,10 +308,15 @@ class DailyReportAnalysisAPI(Star):
                     f"DailyReportAnalysisAPI: 请求总结。使用人格 ID: {persona_id or '默认'}, 系统提示词长度: {len(system_prompt) if system_prompt else 0}"
                 )
 
-                # 强化 Prompt 指令，要求使用人设口吻，并注入身份信息
+                # 强化 Prompt 指令，要求使用人设口吻，重点体现特定用户，并严格遵守输出规范
                 prompt = (
                     f"对话背景：你在本群的昵称是【{bot_nickname}】，特定用户的昵称是【{user_nickname}】。\n"
-                    f"请以你的人设口吻，精炼地总结以下这段群聊记录的话题和主要内容（50字以内）：\n\n"
+                    f"任务目标：精炼地总结以下这段群聊记录（50字以内）。\n"
+                    f"特别要求：请务必以你的人设口吻进行总结，并重点体现出特定用户【{user_nickname}】在对话中参与了哪些讨论或表达了什么核心观点。\n"
+                    f"输出格式要求（务必严格遵守）：\n"
+                    f"话题：<这里填写一句话话题>\n"
+                    f"内容：<这里填写总结内容>\n"
+                    f"规则：1. 不要使用Markdown格式符号（如 ** 或 #）；2. 不要添加多余解释；3. 不要改变此输出结构或增加字段。\n\n"
                     f"{dialogue_text}"
                 )
 
