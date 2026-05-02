@@ -7,6 +7,7 @@ import aiohttp
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.message_components import At, Plain
 from astrbot.api.star import Context, Star, register
 
 
@@ -14,7 +15,7 @@ from astrbot.api.star import Context, Star, register
     "astrbot_plugin_Daily_Report_Analysis_API",
     "e.e.",
     "联动StillAlive发送每日群聊以及与AI机器人私聊的消息汇总",
-    "1.2.4",
+    "1.2.5",
 )
 class DailyReportAnalysisAPI(Star):
     def __init__(self, context: Context, config: dict = None):
@@ -80,11 +81,50 @@ class DailyReportAnalysisAPI(Star):
             except Exception:
                 pass
 
-        # 兜底：从全局配置获取机器人昵称
         nickname = self.context.get_config().get("nickname")
         if not nickname and event:
             nickname = str(event.get_self_id())
         return str(nickname or "机器人")
+
+    async def _resolve_nickname(
+        self, event: AstrMessageEvent, user_id: str, group_id: str
+    ) -> str:
+        """尝试解析任意用户的昵称"""
+        user_id = str(user_id)
+        # 如果是机器人自己
+        if user_id == str(event.get_self_id()):
+            return await self._get_bot_nickname(event, group_id)
+
+        # 尝试从群成员缓存找
+        try:
+            group_data = await event.get_group()
+            if group_data and group_data.members:
+                for m in group_data.members:
+                    if str(m.user_id) == user_id:
+                        return m.nickname or str(m.user_id)
+        except Exception:
+            pass
+
+        return user_id
+
+    async def _format_full_message(self, event: AstrMessageEvent) -> str:
+        """解析消息组件，保留并转化 At 信息为文本格式"""
+        full_content = ""
+        group_id = event.message_obj.group_id
+
+        for comp in event.message_obj.message:
+            if isinstance(comp, Plain):
+                full_content += comp.text
+            elif isinstance(comp, At):
+                # 获取被 At 人的 ID (不同平台属性名可能不同，通常为 qq 或 user_id)
+                target_id = getattr(comp, "qq", getattr(comp, "user_id", None))
+                if target_id:
+                    nickname = await self._resolve_nickname(event, target_id, group_id)
+                    full_content += f"@{nickname} "
+            # 其他组件（如表情）可以根据需要继续添加，目前仅处理文本和 At
+
+        # 如果解析结果为空（例如全是非文本组件），退回到原始 message_str
+        return full_content.strip() or event.message_str
 
     async def terminate(self):
         """插件销毁"""
@@ -189,13 +229,8 @@ class DailyReportAnalysisAPI(Star):
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):
         """监听消息"""
-        message_content = event.message_str
-
-        if not message_content:
-            return
-
         # 仅屏蔽本插件的指令
-        if any(cmd in message_content for cmd in self.internal_commands):
+        if any(cmd in event.message_str for cmd in self.internal_commands):
             return
 
         specific_user_id = str(self.config.get("specific_user_id", ""))
@@ -216,6 +251,9 @@ class DailyReportAnalysisAPI(Star):
                 else "未知群聊"
             )
             self.group_events[group_id] = event
+
+            # 使用增强版解析逻辑保留 At 信息
+            message_content = await self._format_full_message(event)
 
             is_specific_user = sender_id == specific_user_id
             if is_specific_user:
@@ -256,7 +294,9 @@ class DailyReportAnalysisAPI(Star):
                     self._delay_summarize_task(group_id, 600)
                 )
         else:
+            # 私聊记录逻辑
             if sender_id == specific_user_id:
+                message_content = await self._format_full_message(event)
                 self.private_messages.append(
                     {"时间": time_str, "用户": message_content, "你的回复": ""}
                 )
@@ -278,7 +318,6 @@ class DailyReportAnalysisAPI(Star):
         messages = self.group_messages_map.get(group_id, [])
         last_id = self.last_summarized_id.get(group_id, 0)
 
-        # 1. 提取所有尚未总结的新消息
         pending = [m for m in messages if m["id"] > last_id]
         if not pending:
             self.active_groups.discard(group_id)
@@ -286,7 +325,6 @@ class DailyReportAnalysisAPI(Star):
 
         specific_user_id = str(self.config.get("specific_user_id", ""))
 
-        # 2. 寻找特定用户在本次 pending 列表中的最后一次发言索引
         last_user_msg_index = -1
         for i in range(len(pending) - 1, -1, -1):
             if pending[i].get("sender_id") == specific_user_id:
@@ -297,7 +335,6 @@ class DailyReportAnalysisAPI(Star):
             self.active_groups.discard(group_id)
             return
 
-        # 3. 准备内容
         to_summarize = pending
 
         user_nickname = self.user_nicknames.get(group_id, "用户")
@@ -308,7 +345,6 @@ class DailyReportAnalysisAPI(Star):
         last_time = to_summarize[-1].get("时间", "未知时间")
         dialogue_text = "\n".join([m["content"] for m in to_summarize])
 
-        # 增加日志：打印组装好的对话文本，方便调试 ID 和 角色问题
         logger.debug(
             f"DailyReportAnalysisAPI: 喂给 LLM 的对话文本详情:\n---\n{dialogue_text}\n---"
         )
@@ -331,7 +367,6 @@ class DailyReportAnalysisAPI(Star):
                     )
                     system_prompt = default_persona.get("prompt")
 
-                # 强化 Prompt 指令：增加角色定义的强限制
                 prompt = (
                     f"对话背景：你在本群的昵称是【{bot_nickname}】，特定用户的昵称是【{user_nickname}】。\n"
                     f"角色说明（重要）：\n"
@@ -361,7 +396,6 @@ class DailyReportAnalysisAPI(Star):
         else:
             summary = dialogue_text[:100] + "..."
 
-        # 发送
         data = {
             "type": "qq_messages",
             "data": {
@@ -394,12 +428,10 @@ class DailyReportAnalysisAPI(Star):
 
         time_str = datetime.now().strftime("%H:%M")
 
-        # 处理私聊回复
         if not event.message_obj.group_id:
             if self.private_messages and not self.private_messages[-1].get("你的回复"):
                 self.private_messages[-1]["你的回复"] = reply_text
                 await self._send_private_immediately()
-        # 处理群聊回复
         else:
             group_id = event.message_obj.group_id
             group_name = (
