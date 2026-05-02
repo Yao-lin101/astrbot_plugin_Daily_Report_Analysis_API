@@ -1,4 +1,5 @@
 import asyncio
+from collections import defaultdict
 from datetime import datetime
 
 import aiohttp
@@ -17,14 +18,17 @@ from astrbot.api.star import Context, Star, register
 class DailyReportAnalysisAPI(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
-        self.group_messages = []
+        # group_messages_map: {group_id: [messages]}
+        self.group_messages_map = defaultdict(list)
+        # 记录哪些群组在当前周期内有特定用户参与
+        self.active_groups = set()
+
         self.private_messages = []
         self.scheduled_task = None
-        self.config = config  # 存储插件配置
+        self.config = config
 
     async def initialize(self):
-        """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
-        # 如果 config 为空，尝试从 context 获取（虽然 get_config 通常返回全局配置）
+        """插件初始化"""
         if not self.config:
             self.config = self.context.get_config()
 
@@ -37,7 +41,7 @@ class DailyReportAnalysisAPI(Star):
         self.scheduled_task = asyncio.create_task(self.hourly_task())
 
     async def terminate(self):
-        """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""
+        """插件销毁"""
         if self.scheduled_task:
             self.scheduled_task.cancel()
 
@@ -60,10 +64,12 @@ class DailyReportAnalysisAPI(Star):
                     target_url, json=data, headers=headers
                 ) as response:
                     if response.status == 200:
-                        logger.info("DailyReportAnalysisAPI: 消息发送成功")
+                        logger.info(
+                            f"DailyReportAnalysisAPI: {data.get('type')} 发送成功"
+                        )
                     else:
                         logger.error(
-                            f"DailyReportAnalysisAPI: 消息发送失败，状态码：{response.status}"
+                            f"DailyReportAnalysisAPI: 发送失败，状态码：{response.status}"
                         )
         except Exception as e:
             logger.error(f"DailyReportAnalysisAPI: 发送请求时出错：{str(e)}")
@@ -72,116 +78,78 @@ class DailyReportAnalysisAPI(Star):
     async def on_all_message(self, event: AstrMessageEvent):
         """监听所有消息"""
         sender_id = str(event.get_sender_id())
-        logger.debug(
-            f"DailyReportAnalysisAPI: 收到消息来自 {sender_id}: {event.message_str}"
-        )
+        message_content = event.message_str  # 仅文字
 
-        specific_user_id = str(self.config.get("specific_user_id", ""))
+        if not message_content:
+            return
+
+        config = self.config or self.context.get_config()
+        specific_user_id = str(config.get("specific_user_id", ""))
 
         if not specific_user_id:
             return
 
-        # 记录用户消息
-        if sender_id == specific_user_id:
-            message_content = event.message_str
+        time_str = datetime.fromtimestamp(event.message_obj.timestamp).strftime("%H:%M")
+        sender_name = event.get_sender_name()
 
-            if not message_content:
-                return
-
-            time_str = datetime.fromtimestamp(event.message_obj.timestamp).strftime(
-                "%H:%M"
-            )
-
-            if not event.message_obj.group_id:
-                # 私聊消息
-                logger.info(
-                    f"DailyReportAnalysisAPI: 记录私聊消息 - {event.get_sender_name()}: {message_content}"
-                )
+        # 处理私聊消息
+        if not event.message_obj.group_id:
+            if sender_id == specific_user_id:
+                logger.info(f"DailyReportAnalysisAPI: 记录私聊消息 - {sender_name}")
                 self.private_messages.append(
                     {
                         "时间": time_str,
-                        "用户昵称": event.get_sender_name(),
-                        "用户消息": message_content,
-                        "机器人回复": "",
+                        "用户昵称": message_content,  # 按照文档格式：Key为"用户昵称"，Value为内容
+                        "机器人昵称": "",
                     }
                 )
-            else:
-                # 群聊消息 (特定用户在群里说话)
-                logger.info(
-                    f"DailyReportAnalysisAPI: 记录群聊消息(特定用户) - {event.get_sender_name()}: {message_content}"
-                )
-                new_msg_group = {
-                    "时间": time_str,
-                    "群名称": "未知群聊",
-                    f"【用户】{event.get_sender_name()}": message_content,
-                }
-                self.group_messages.append(new_msg_group)
+        # 处理群聊消息
         else:
-            # 如果是群聊中其他人的消息
-            if event.message_obj.group_id:
-                message_content = event.message_str
+            group_id = event.message_obj.group_id
+            group_name = "未知群聊"
+            if event.message_obj.group and event.message_obj.group.group_name:
+                group_name = event.message_obj.group.group_name
 
-                if message_content:
-                    time_str = datetime.fromtimestamp(
-                        event.message_obj.timestamp
-                    ).strftime("%H:%M")
-                    logger.info(
-                        f"DailyReportAnalysisAPI: 记录群聊消息(群友) - {event.get_sender_name()}: {message_content}"
-                    )
-                    new_msg_group = {
-                        "时间": time_str,
-                        "群名称": "未知群聊",
-                        f"【群友】{event.get_sender_name()}": message_content,
-                    }
-                    self.group_messages.append(new_msg_group)
+            # 标记特定用户参与的群组
+            if sender_id == specific_user_id:
+                self.active_groups.add(group_id)
+                prefix = "【用户】"
+            else:
+                prefix = "【群友】"
+
+            msg_obj = {
+                "时间": time_str,
+                "群名称": group_name,
+                f"{prefix}{sender_name}": message_content,
+            }
+            self.group_messages_map[group_id].append(msg_obj)
 
     @filter.after_message_sent()
     async def after_message_sent(self, event: AstrMessageEvent) -> None:
-        """消息发送后的处理：获取机器人回复并记录"""
+        """消息发送后的处理：记录机器人回复"""
         result = event.get_result()
         if not result:
             return
 
-        # 获取回复文本
         reply_text = result.get_plain_text()
         if not reply_text:
             return
 
-        # 判断是群聊还是私聊并记录回复
-        if event.message_obj.group_id:
-            if self.group_messages and not self.group_messages[-1].get("机器人回复"):
-                logger.info(
-                    f"DailyReportAnalysisAPI: 记录机器人群聊回复: {reply_text[:20]}..."
-                )
-                self.group_messages[-1]["机器人回复"] = reply_text
-        else:
+        if not event.message_obj.group_id:
+            # 私聊回复
             if self.private_messages and not self.private_messages[-1].get(
-                "机器人回复"
+                "机器人昵称"
             ):
-                logger.info(
-                    f"DailyReportAnalysisAPI: 记录机器人私聊回复: {reply_text[:20]}..."
-                )
-                self.private_messages[-1]["机器人回复"] = reply_text
+                self.private_messages[-1]["机器人昵称"] = reply_text
+                logger.info("DailyReportAnalysisAPI: 私聊对话完成，立即发送")
+                await self._send_private_immediately()
+        else:
+            # 群聊回复（通常特定用户对话不会触发机器人回复的记录要求，但按文档逻辑群聊是每小时汇总）
+            # 如果需要记录机器人对特定用户的回复，可以扩展此处逻辑
+            pass
 
-    async def hourly_task(self):
-        """每小时执行一次的任务"""
-        while True:
-            # 立即检查并发送一次（如果有残留数据）
-            await self._check_and_send()
-
-            # 等待一小时
-            await asyncio.sleep(3600)
-
-    async def _check_and_send(self):
-        """检查是否有待发送的数据并发送"""
-        if self.group_messages:
-            data = {
-                "type": "qq_messages",
-                "data": {"group_messages": list(self.group_messages)},
-            }
-            await self.send_to_api(data)
-            self.group_messages = []
-
+    async def _send_private_immediately(self):
+        """立即发送私聊消息"""
         if self.private_messages:
             data = {
                 "type": "qq_messages",
@@ -189,3 +157,26 @@ class DailyReportAnalysisAPI(Star):
             }
             await self.send_to_api(data)
             self.private_messages = []
+
+    async def hourly_task(self):
+        """定时汇总任务"""
+        while True:
+            await asyncio.sleep(3600)
+            await self._check_and_send_groups()
+
+    async def _check_and_send_groups(self):
+        """汇总并发送特定用户参与过的群聊对话"""
+        all_to_send = []
+
+        # 仅搜寻特定用户参与过的群组对话
+        for group_id in list(self.active_groups):
+            if group_id in self.group_messages_map:
+                all_to_send.extend(self.group_messages_map[group_id])
+
+        if all_to_send:
+            data = {"type": "qq_messages", "data": {"group_messages": all_to_send}}
+            await self.send_to_api(data)
+
+        # 清理本周期数据
+        self.group_messages_map.clear()
+        self.active_groups.clear()
