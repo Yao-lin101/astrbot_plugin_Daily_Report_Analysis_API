@@ -29,19 +29,15 @@ HTML_TEMPLATE = """
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background-color: #f3f4f6;
+            background-color: white;
             margin: 0;
-            padding: 20px;
-            display: flex;
-            justify-content: center;
+            padding: 0;
+            display: block;
         }
 
         .container {
             width: 100%;
-            max-width: 800px;
             background: white;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
             overflow: hidden;
             display: flex;
             flex-direction: column;
@@ -176,9 +172,12 @@ class ReportHandler:
         tmpl_data = {"date": date, "is_hidden": is_hidden, "report_html": report_html}
 
         try:
-            # 渲染图片
+            # 渲染图片：设置视口宽度为 600px 以消除留白，scale="device" 提升分辨率
             image_path = await html_renderer.render_custom_template(
-                HTML_TEMPLATE, tmpl_data
+                HTML_TEMPLATE, 
+                tmpl_data,
+                viewport={"width": 600, "height": 1000},
+                options={"scale": "device"}
             )
             return image_path
         except Exception as e:
