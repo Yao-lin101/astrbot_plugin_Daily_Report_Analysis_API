@@ -74,9 +74,19 @@ class DailyReportAnalysisAPI(Star):
         except Exception as e:
             logger.error(f"DailyReportAnalysisAPI: 发送请求时出错：{str(e)}")
 
+    def _check_permission(self, event: AstrMessageEvent) -> bool:
+        """检查发送者是否为特定用户"""
+        sender_id = str(event.get_sender_id())
+        specific_user_id = str(self.config.get("specific_user_id", ""))
+        return sender_id == specific_user_id
+
     @filter.command("stillalive群总结")
     async def manual_group_summary(self, event: AstrMessageEvent):
         """主动触发群聊总结"""
+        if not self._check_permission(event):
+            yield event.plain_result("抱歉，您没有权限执行此指令。")
+            return
+
         if not self.active_groups:
             yield event.plain_result("目前没有搜寻到特定用户参与的群聊记录。")
             return
@@ -89,6 +99,25 @@ class DailyReportAnalysisAPI(Star):
         except Exception as e:
             logger.error(f"DailyReportAnalysisAPI: 手动总结失败: {e}")
             yield event.plain_result(f"发送失败：{e}")
+
+    @filter.command("stillalive清理缓存")
+    async def clear_cache(self, event: AstrMessageEvent):
+        """手动清理群聊缓存"""
+        if not self._check_permission(event):
+            yield event.plain_result("抱歉，您没有权限执行此指令。")
+            return
+
+        count = sum(len(msgs) for msgs in self.group_messages_map.values())
+        self.group_messages_map.clear()
+        self.active_groups.clear()
+        self.private_messages.clear()
+
+        yield event.plain_result(
+            f"已成功清理缓存。清理了 {count} 条群聊记录和所有待发送的私聊记录。"
+        )
+        logger.info(
+            f"DailyReportAnalysisAPI: 用户 {event.get_sender_id()} 手动清空了缓存。"
+        )
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):
