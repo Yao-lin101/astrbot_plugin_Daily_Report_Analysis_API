@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from collections import defaultdict
 from datetime import datetime
 
@@ -13,7 +14,7 @@ from astrbot.api.star import Context, Star, register
     "astrbot_plugin_Daily_Report_Analysis_API",
     "e.e.",
     "联动StillAlive发送每日群聊以及与AI机器人私聊的消息汇总",
-    "1.2.0",
+    "1.2.1",
 )
 class DailyReportAnalysisAPI(Star):
     def __init__(self, context: Context, config: dict = None):
@@ -33,17 +34,38 @@ class DailyReportAnalysisAPI(Star):
 
         self.private_messages = []
         self.config = config
-        self.internal_commands = ["stillalive群总结", "stillalive清理缓存"]
+        self.internal_commands = []  # 将在 initialize 中自动填充
 
     async def initialize(self):
         """插件初始化"""
         if not self.config:
             self.config = self.context.get_config()
 
-        specific_user_id = self.config.get("specific_user_id")
+        # 自动识别插件内注册的所有指令名，实现自动屏蔽
+        self._auto_collect_internal_commands()
+
         logger.info(
-            f"DailyReportAnalysisAPI: 插件已初始化。监控用户ID: {specific_user_id}"
+            f"DailyReportAnalysisAPI: 插件已初始化。监控用户ID: {self.config.get('specific_user_id')}, 已自动注册屏蔽指令: {self.internal_commands}"
         )
+
+    def _auto_collect_internal_commands(self):
+        """通过反射获取所有被 @filter.command 装饰的指令名"""
+        self.internal_commands = []
+        for name, method in inspect.getmembers(self, predicate=inspect.ismethod):
+            # 检查方法是否有 AstrBot 过滤器标记
+            # @filter.command 装饰后的方法会带有特定属性（如 _astr_filter_cmds 或类似标记）
+            if hasattr(method, "__astr_filter__"):
+                filt = getattr(method, "__astr_filter__")
+                # 提取指令名
+                if hasattr(filt, "commands"):
+                    self.internal_commands.extend(filt.commands)
+
+        # 兜底：如果自动获取失败（API变动），手动加入已知指令
+        if not self.internal_commands:
+            self.internal_commands = ["stillalive群总结", "stillalive清理缓存"]
+        else:
+            # 去重
+            self.internal_commands = list(set(self.internal_commands))
 
     async def terminate(self):
         """插件销毁"""
