@@ -74,6 +74,22 @@ class DailyReportAnalysisAPI(Star):
         except Exception as e:
             logger.error(f"DailyReportAnalysisAPI: 发送请求时出错：{str(e)}")
 
+    @filter.command("stillalive群总结")
+    async def manual_group_summary(self, event: AstrMessageEvent):
+        """主动触发群聊总结"""
+        if not self.active_groups:
+            yield event.plain_result("目前没有搜寻到特定用户参与的群聊记录。")
+            return
+
+        yield event.plain_result("正在生成群聊话题总结并发送...")
+
+        try:
+            await self._check_and_send_groups()
+            yield event.plain_result("群聊总结发送完成。")
+        except Exception as e:
+            logger.error(f"DailyReportAnalysisAPI: 手动总结失败: {e}")
+            yield event.plain_result(f"发送失败：{e}")
+
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):
         """监听所有消息"""
@@ -160,9 +176,17 @@ class DailyReportAnalysisAPI(Star):
 
         provider_id = self.config.get("summary_provider_id")
 
-        for group_id in list(self.active_groups):
-            if group_id in self.group_messages_map:
-                messages = self.group_messages_map[group_id]
+        # 复制数据以避免在总结过程中被修改
+        active_groups_snapshot = list(self.active_groups)
+        group_messages_map_snapshot = dict(self.group_messages_map)
+
+        # 清理本周期数据（在总结前清理，防止重叠）
+        self.group_messages_map.clear()
+        self.active_groups.clear()
+
+        for group_id in active_groups_snapshot:
+            if group_id in group_messages_map_snapshot:
+                messages = group_messages_map_snapshot[group_id]
                 if not messages:
                     continue
 
@@ -195,7 +219,3 @@ class DailyReportAnalysisAPI(Star):
                 "data": {"group_messages": summarized_results},
             }
             await self.send_to_api(data)
-
-        # 清理本周期数据
-        self.group_messages_map.clear()
-        self.active_groups.clear()
