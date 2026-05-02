@@ -74,21 +74,11 @@ class DailyReportAnalysisAPI(Star):
         except Exception as e:
             logger.error(f"DailyReportAnalysisAPI: 发送请求时出错：{str(e)}")
 
-    async def get_bot_name(self, event: AstrMessageEvent) -> str:
-        """获取机器人当前人格的名称"""
-        try:
-            persona = await self.context.persona_manager.get_default_persona_v3(
-                event.unified_msg_origin
-            )
-            return persona.get("name", "机器人")
-        except Exception:
-            return "机器人"
-
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):
         """监听所有消息"""
         sender_id = str(event.get_sender_id())
-        message_content = event.message_str
+        message_content = event.message_str  # 仅文字
 
         if not message_content:
             return
@@ -100,20 +90,17 @@ class DailyReportAnalysisAPI(Star):
             return
 
         time_str = datetime.fromtimestamp(event.message_obj.timestamp).strftime("%H:%M")
-        sender_name = event.get_sender_name() or f"User({sender_id})"
+        sender_name = event.get_sender_name()
 
         # 处理私聊消息
         if not event.message_obj.group_id:
             if sender_id == specific_user_id:
-                bot_name = await self.get_bot_name(event)
                 logger.info(f"DailyReportAnalysisAPI: 记录私聊消息 - {sender_name}")
-                # 记录本次对话需要的元数据，以便在回复后填充
                 self.private_messages.append(
                     {
                         "时间": time_str,
-                        sender_name: message_content,
-                        "__bot_name": bot_name,  # 临时存储机器人名称
-                        "__user_name": sender_name,  # 临时存储用户名称
+                        "用户": message_content,  # 按照文档格式：Key为"用户昵称"，Value为内容
+                        "你的回复": "",
                     }
                 )
         # 处理群聊消息
@@ -150,19 +137,15 @@ class DailyReportAnalysisAPI(Star):
 
         if not event.message_obj.group_id:
             # 私聊回复
-            if self.private_messages:
-                last_msg = self.private_messages[-1]
-                bot_name = last_msg.pop("__bot_name", "机器人")
-                last_msg.pop("__user_name", None)  # 移除辅助字段
-
-                if bot_name not in last_msg:
-                    last_msg[bot_name] = reply_text
-                    logger.info(
-                        f"DailyReportAnalysisAPI: 记录机器人私聊回复: {bot_name}"
-                    )
-                    await self._send_private_immediately()
+            if self.private_messages and not self.private_messages[-1].get(
+                "你的回复"
+            ):
+                self.private_messages[-1]["你的回复"] = reply_text
+                logger.info("DailyReportAnalysisAPI: 私聊对话完成，立即发送")
+                await self._send_private_immediately()
         else:
-            # 群聊回复逻辑（如果需要记录机器人回复到群聊汇总中）
+            # 群聊回复（通常特定用户对话不会触发机器人回复的记录要求，但按文档逻辑群聊是每小时汇总）
+            # 如果需要记录机器人对特定用户的回复，可以扩展此处逻辑
             pass
 
     async def _send_private_immediately(self):
@@ -184,6 +167,8 @@ class DailyReportAnalysisAPI(Star):
     async def _check_and_send_groups(self):
         """汇总并发送特定用户参与过的群聊对话"""
         all_to_send = []
+
+        # 仅搜寻特定用户参与过的群组对话
         for group_id in list(self.active_groups):
             if group_id in self.group_messages_map:
                 all_to_send.extend(self.group_messages_map[group_id])
@@ -192,5 +177,6 @@ class DailyReportAnalysisAPI(Star):
             data = {"type": "qq_messages", "data": {"group_messages": all_to_send}}
             await self.send_to_api(data)
 
+        # 清理本周期数据
         self.group_messages_map.clear()
         self.active_groups.clear()
