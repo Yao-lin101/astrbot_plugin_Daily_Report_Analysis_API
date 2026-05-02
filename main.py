@@ -20,6 +20,12 @@ class DailyReportAnalysisAPI(Star):
         super().__init__(context)
         # group_messages_map: {group_id: [messages]}
         self.group_messages_map = defaultdict(list)
+        # 记录各群聊中特定用户的最新昵称
+        self.user_nicknames = {}
+        # 记录各群聊中机器人的最新昵称
+        self.bot_nicknames = {}
+        # 记录各群组的一个事件实例，用于调用平台 API
+        self.group_events = {}
         # 记录各群聊的静默期定时任务
         self.group_timers = {}
         # 记录哪些群组目前有待总结的数据
@@ -121,17 +127,17 @@ class DailyReportAnalysisAPI(Star):
             yield event.plain_result("该指令仅在群聊中有效。")
             return
 
-        count = len(self.group_messages_map.get(group_id, []))
         self.group_messages_map.pop(group_id, None)
         self.active_groups.discard(group_id)
+        self.user_nicknames.pop(group_id, None)
+        self.bot_nicknames.pop(group_id, None)
+        self.group_events.pop(group_id, None)
 
         if group_id in self.group_timers:
             self.group_timers[group_id].cancel()
             self.group_timers.pop(group_id, None)
 
-        yield event.plain_result(
-            f"已成功清理当前群聊缓存。清理了 {count} 条记录并重置了定时器。"
-        )
+        yield event.plain_result("已成功清理当前群聊缓存。")
         logger.info(
             f"DailyReportAnalysisAPI: 用户 {event.get_sender_id()} 手动清空了群聊 {group_id} 的缓存。"
         )
@@ -145,7 +151,7 @@ class DailyReportAnalysisAPI(Star):
         if not message_content:
             return
 
-        # 1. 排除用户指令 (通常以 / 或 . 开头)
+        # 1. 排除用户指令
         if message_content.startswith(("/", ".")):
             return
 
@@ -173,8 +179,15 @@ class DailyReportAnalysisAPI(Star):
             if event.message_obj.group and event.message_obj.group.group_name:
                 group_name = event.message_obj.group.group_name
 
+            # 保存事件实例以便后续调用 API
+            self.group_events[group_id] = event
+
             is_specific_user = sender_id == specific_user_id
-            prefix = "【用户】" if is_specific_user else "【群友】"
+            if is_specific_user:
+                self.user_nicknames[group_id] = sender_name
+                prefix = "【用户】"
+            else:
+                prefix = "【群友】"
 
             msg_content_formatted = f"{prefix}{sender_name}: {message_content}"
             logger.debug(
@@ -199,6 +212,9 @@ class DailyReportAnalysisAPI(Star):
                     self.group_timers[group_id].cancel()
 
                 # 开启新定时器
+                logger.debug(
+                    f"DailyReportAnalysisAPI: 群 [{group_name}] 开启/重置 10 分钟静默计时器。"
+                )
                 self.group_timers[group_id] = asyncio.create_task(
                     self._delay_summarize_task(group_id, 600)
                 )
@@ -243,15 +259,35 @@ class DailyReportAnalysisAPI(Star):
         # 更新缓存
         self.group_messages_map[group_id] = to_keep
         self.active_groups.discard(group_id)
+        user_nickname = self.user_nicknames.get(group_id, "用户")
+
+        # 获取机器人昵称
+        bot_nickname = self.bot_nicknames.get(group_id)
+        if not bot_nickname:
+            # 尝试通过最近的 event 动态获取
+            event = self.group_events.get(group_id)
+            if event:
+                try:
+                    # 某些平台支持通过 get_group() 获取成员信息
+                    group_data = await event.get_group()
+                    if group_data and group_data.members:
+                        self_id = event.get_self_id()
+                        for m in group_data.members:
+                            if str(m.user_id) == str(self_id):
+                                bot_nickname = m.nickname
+                                self.bot_nicknames[group_id] = bot_nickname
+                                break
+                except Exception:
+                    pass
+
+            # 如果还是没有，使用全局配置或默认值
+            if not bot_nickname:
+                bot_nickname = self.context.get_config().get("nickname", "机器人")
 
         # 构建对话文本进行总结
         group_name = to_summarize[0].get("群名称", "未知群聊")
         last_time = to_summarize[-1].get("时间", "未知时间")
         dialogue_text = "\n".join([m["content"] for m in to_summarize])
-
-        logger.debug(
-            f"DailyReportAnalysisAPI: 开始总结群 [{group_name}]，消息条数: {len(to_summarize)}"
-        )
 
         provider_id = self.config.get("summary_provider_id")
         if provider_id:
@@ -272,7 +308,13 @@ class DailyReportAnalysisAPI(Star):
             "type": "qq_messages",
             "data": {
                 "group_messages": [
-                    {"时间": last_time, "群名称": group_name, "话题总结": summary}
+                    {
+                        "时间": last_time,
+                        "群名称": group_name,
+                        "用户在本群昵称": user_nickname,
+                        "你在本群昵称": bot_nickname,  # 新增字段
+                        "话题总结": summary,
+                    }
                 ]
             },
         }
@@ -289,12 +331,8 @@ class DailyReportAnalysisAPI(Star):
         if not reply_text:
             return
 
-        # 2. 排除指令回复。根据 ResultContentType 判断。
-        # 用户要求：llm回复不算指令回复，而是正常消息。
-        # AstrBot 中 LLM 回复的 content_type 是 LLM_RESULT。
         is_llm_reply = result.is_model_result()
         if not is_llm_reply:
-            # 如果不是 LLM 回复，则视为指令回复或普通插件回复，排除。
             return
 
         time_str = datetime.now().strftime("%H:%M")
@@ -304,14 +342,20 @@ class DailyReportAnalysisAPI(Star):
             if self.private_messages and not self.private_messages[-1].get("你的回复"):
                 self.private_messages[-1]["你的回复"] = reply_text
                 await self._send_private_immediately()
-        # 处理群聊回复 (用户新需求：群聊也记录 LLM 回复)
+        # 处理群聊回复
         else:
             group_id = event.message_obj.group_id
             group_name = "未知群聊"
             if event.message_obj.group and event.message_obj.group.group_name:
                 group_name = event.message_obj.group.group_name
 
-            bot_name = event.get_self_id()  # 或者使用固定名称
+            # 记录此时机器人的 ID，尝试获取昵称
+            bot_name = self.bot_nicknames.get(group_id)
+            if not bot_name:
+                bot_name = self.context.get_config().get(
+                    "nickname", event.get_self_id()
+                )
+
             msg_content_formatted = f"【机器人】{bot_name}: {reply_text}"
 
             msg_obj = {
