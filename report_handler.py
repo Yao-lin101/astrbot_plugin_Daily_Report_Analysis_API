@@ -172,13 +172,14 @@ class ReportHandler:
         tmpl_data = {"date": date, "is_hidden": is_hidden, "report_html": report_html}
 
         try:
-            # 渲染图片：将 viewport 放入 options 字典中
-            image_path = await html_renderer.render_custom_template(
+            # 切换到本地渲染策略，避开远程服务器 404 或网络问题
+            # 本地渲染会自动处理 viewport 和高清缩放
+            image_path = await html_renderer.local_strategy.render_custom_template(
                 HTML_TEMPLATE, 
                 tmpl_data,
                 options={
-                    "scale": "device",
-                    "viewport": {"width": 600, "height": 1000}
+                    "viewport": {"width": 600, "height": 1000},
+                    "device_scale_factor": 2 # 2倍采样，保证超高清
                 }
             )
             return image_path
