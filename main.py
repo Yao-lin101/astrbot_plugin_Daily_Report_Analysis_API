@@ -15,16 +15,20 @@ from astrbot.api.star import Context, Star, register
     "1.0.0",
 )
 class DailyReportAnalysisAPI(Star):
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
         self.group_messages = []
         self.private_messages = []
         self.scheduled_task = None
+        self.config = config  # 存储插件配置
 
     async def initialize(self):
         """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
-        config = self.context.get_config()
-        specific_user_id = config.get("specific_user_id")
+        # 如果 config 为空，尝试从 context 获取（虽然 get_config 通常返回全局配置）
+        if not self.config:
+            self.config = self.context.get_config()
+
+        specific_user_id = self.config.get("specific_user_id")
         logger.info(
             f"DailyReportAnalysisAPI: 插件已初始化。监控用户ID: {specific_user_id}"
         )
@@ -39,9 +43,8 @@ class DailyReportAnalysisAPI(Star):
 
     async def send_to_api(self, data):
         """发送数据到目标API"""
-        config = self.context.get_config()
-        target_url = config.get("target_url")
-        character_key = config.get("character_key")
+        target_url = self.config.get("target_url")
+        character_key = self.config.get("character_key")
 
         if not target_url or not character_key:
             logger.error(
@@ -73,8 +76,7 @@ class DailyReportAnalysisAPI(Star):
             f"DailyReportAnalysisAPI: 收到消息来自 {sender_id}: {event.message_str}"
         )
 
-        config = self.context.get_config()
-        specific_user_id = str(config.get("specific_user_id", ""))
+        specific_user_id = str(self.config.get("specific_user_id", ""))
 
         if not specific_user_id:
             return
