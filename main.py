@@ -128,7 +128,7 @@ class DailyReportAnalysisAPI(Star):
                 if p.exists():
                     img_bytes = p.read_bytes()
                     base64_str = base64.b64encode(img_bytes).decode('utf-8')
-                    yield event.chain_result([Image(base64=base64_str)])
+                    yield event.chain_result([Image.fromBase64(base64_str)])
                 else:
                     yield event.plain_result(f"错误：渲染出的图片文件不存在。")
             except Exception as e:
