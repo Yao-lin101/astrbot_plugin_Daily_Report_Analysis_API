@@ -172,12 +172,14 @@ class ReportHandler:
         tmpl_data = {"date": date, "is_hidden": is_hidden, "report_html": report_html}
 
         try:
-            # 渲染图片：设置视口宽度为 600px 以消除留白，scale="device" 提升分辨率
+            # 渲染图片：将 viewport 放入 options 字典中
             image_path = await html_renderer.render_custom_template(
                 HTML_TEMPLATE, 
                 tmpl_data,
-                viewport={"width": 600, "height": 1000},
-                options={"scale": "device"}
+                options={
+                    "scale": "device",
+                    "viewport": {"width": 600, "height": 1000}
+                }
             )
             return image_path
         except Exception as e:
