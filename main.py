@@ -111,44 +111,26 @@ class DailyReportAnalysisAPI(Star):
                     })
                     break
 
-    @filter.event_message_type(filter.EventMessageType.ALL)
-    async def on_bot_response(self, event: AstrMessageEvent):
-        """监听机器人的回复"""
-        # 检查是否是机器人的回复
-        # 注意：这里需要根据实际情况判断，不同消息平台的实现可能不同
-        # 暂时假设机器人回复也会触发事件，需要根据实际情况调整
-        
-        # 检查是否有未完成的私聊消息
-        if self.private_messages and not self.private_messages[-1].get("机器人回复"):
-            # 提取机器人回复内容
-            for msg_component in event.message_obj.message:
-                if hasattr(msg_component, 'type') and msg_component.type == 'Plain':
-                    message_content = getattr(msg_component, 'text', '')
-                    # 更新最后一条私聊消息的机器人回复
-                    self.private_messages[-1]["机器人回复"] = message_content
-                    
-                    # 发送私聊消息到API
-                    data = {
-                        "type": "qq_messages",
-                        "data": {
-                            "private_messages": [{
-                                "时间": self.private_messages[-1]["时间"],
-                                "用户昵称": self.private_messages[-1]["用户昵称"],
-                                "机器人昵称": message_content
-                            }]
-                        }
-                    }
-                    await self.send_to_api(data)
-                    break
-
     @filter.after_message_sent()
     async def after_message_sent(self, event: AstrMessageEvent) -> None:
-        """消息发送后的处理"""
-        pass
+        """消息发送后的处理：获取机器人回复并记录"""
+        result = event.get_result()
+        if not result:
+            return
+            
+        # 获取回复文本
+        reply_text = result.get_plain_text()
+        if not reply_text:
+            return
 
-    async def after_message_sent_handler(self, event: AstrMessageEvent, result=None):
-        """消息发送后的处理（兼容旧版本）"""
-        pass
+        # 判断是群聊还是私聊并记录回复
+        if event.message_obj.group_id:
+            if self.group_messages and not self.group_messages[-1].get("机器人回复"):
+                self.group_messages[-1]["机器人回复"] = reply_text
+        else:
+            if self.private_messages and not self.private_messages[-1].get("机器人回复"):
+                self.private_messages[-1]["机器人回复"] = reply_text
+
 
     async def hourly_task(self):
         """每小时执行一次的任务"""
@@ -169,3 +151,19 @@ class DailyReportAnalysisAPI(Star):
                 
                 # 清空群聊消息记录
                 self.group_messages = []
+
+            if self.private_messages:
+                # 构建私聊消息数据
+                data = {
+                    "type": "qq_messages",
+                    "data": {
+                        "private_messages": self.private_messages
+                    }
+                }
+                
+                # 发送数据到API
+                await self.send_to_api(data)
+                
+                # 清空私聊消息记录
+                self.private_messages = []
+
