@@ -1,6 +1,15 @@
 import mistune
+from astrbot.api import logger
+from astrbot.core.utils.io import save_temp_img
+from PIL import Image
+import io
+import os
 
-from astrbot.api import html_renderer, logger
+try:
+    from playwright.async_api import async_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -29,22 +38,21 @@ HTML_TEMPLATE = """
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background-color: #f1f5f9; /* 稍微深一点的背景，衬托中间的内容 */
+            background-color: #f1f5f9;
             margin: 0;
             padding: 0;
             width: 100%;
-            zoom: 1.4; /* 核心优化：变相提升分辨率，让文字更大更清晰 */
         }
 
         .container {
             width: 100%;
-            max-width: 600px; /* 限制最大宽度 */
-            margin: 0 auto; /* 居中显示 */
+            max-width: 600px;
+            margin: 0 auto;
             background: white;
             overflow: hidden;
             display: flex;
             flex-direction: column;
-            box-shadow: 0 0 20px rgba(0,0,0,0.1); /* 增加阴影，更有质感 */
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
         }
 
         .header {
@@ -81,6 +89,7 @@ HTML_TEMPLATE = """
             padding: 24px;
             color: var(--slate-700);
             line-height: 1.6;
+            font-size: 16px;
         }
 
         .prose h1 { font-size: 1.5rem; font-weight: 700; margin-top: 0; margin-bottom: 1rem; color: var(--slate-800); border-bottom: 2px solid var(--blue-100); padding-bottom: 8px; }
@@ -97,6 +106,9 @@ HTML_TEMPLATE = """
             font-style: italic;
             margin: 1.5rem 0;
             color: var(--slate-700);
+            background-color: var(--blue-50);
+            padding: 10px 15px;
+            border-radius: 0 8px 8px 0;
         }
 
         .prose table {
@@ -166,22 +178,48 @@ class ReportHandler:
         is_hidden = report_data.get("is_hidden", False)
         markdown_content = report_data.get("markdown", "暂无内容")
 
-        # 预处理：增强加粗文本显示 (参考 TSX 中的 normalizeMarkdownFormatting)
-        # 这里使用 mistune 渲染 HTML
+        # 使用 mistune 渲染 Markdown
         renderer = mistune.create_markdown(
             plugins=["table", "strikethrough", "task_lists"]
         )
         report_html = renderer(markdown_content)
-
+        
+        # 准备完整的 HTML 内容
         tmpl_data = {"date": date, "is_hidden": is_hidden, "report_html": report_html}
 
+        # 检查是否强制使用本地渲染 (用于本地预览测试)
+        use_local_debug = os.environ.get("REMOTE_RENDER_DEBUG") == "1"
+
+        if use_local_debug and PLAYWRIGHT_AVAILABLE:
+            try:
+                logger.info("ReportHandler: 检测到调试模式，正在使用本地 Playwright 渲染预览...")
+                final_html = HTML_TEMPLATE.replace("{{ date }}", date) \
+                                           .replace("{{ report_html | safe }}", report_html) \
+                                           .replace("{% if is_hidden %}", "" if is_hidden else "<!--") \
+                                           .replace("{% endif %}", "" if is_hidden else "-->")
+                
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch()
+                    context = await browser.new_context(viewport={'width': 600, 'height': 800}, device_scale_factor=2)
+                    page = await context.new_page()
+                    await page.set_content(final_html)
+                    await page.wait_for_load_state("networkidle")
+                    image_bytes = await page.screenshot(full_page=True)
+                    await browser.close()
+                    img = Image.open(io.BytesIO(image_bytes))
+                    return save_temp_img(img)
+            except Exception as e:
+                logger.error(f"ReportHandler: 本地调试渲染失败: {e}")
+
+        # 默认生产逻辑：使用远程 API
         try:
-            # 回归零参数调用：完全同步官方默认行为，避免任何参数导致的远程 404
+            from astrbot.api import html_renderer
+            # 使用官方接口进行渲染
             image_path = await html_renderer.render_custom_template(
                 HTML_TEMPLATE, 
                 tmpl_data
             )
             return image_path
         except Exception as e:
-            logger.error(f"ReportHandler: 渲染报告出错: {e}")
+            logger.error(f"ReportHandler: 远程渲染出错: {e}")
             return None
