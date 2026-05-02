@@ -13,7 +13,7 @@ from astrbot.api.star import Context, Star, register
     "astrbot_plugin_Daily_Report_Analysis_API",
     "e.e.",
     "联动StillAlive发送每日群聊以及与AI机器人私聊的消息汇总",
-    "1.1.4",
+    "1.1.5",
 )
 class DailyReportAnalysisAPI(Star):
     def __init__(self, context: Context, config: dict = None):
@@ -308,8 +308,12 @@ class DailyReportAnalysisAPI(Star):
                     f"DailyReportAnalysisAPI: 请求总结。使用人格 ID: {persona_id or '默认'}, 系统提示词长度: {len(system_prompt) if system_prompt else 0}"
                 )
 
-                # 强化 Prompt 指令，要求使用人设口吻
-                prompt = f"请以你的人设口吻，精炼地总结以下这段群聊记录的话题和主要内容（50字以内）：\n\n{dialogue_text}"
+                # 强化 Prompt 指令，要求使用人设口吻，并注入身份信息
+                prompt = (
+                    f"对话背景：你在本群的昵称是【{bot_nickname}】，特定用户的昵称是【{user_nickname}】。\n"
+                    f"请以你的人设口吻，精炼地总结以下这段群聊记录的话题和主要内容（50字以内）：\n\n"
+                    f"{dialogue_text}"
+                )
 
                 response = await self.context.llm_generate(
                     chat_provider_id=provider_id,
