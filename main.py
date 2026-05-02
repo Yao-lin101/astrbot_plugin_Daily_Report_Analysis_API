@@ -5,7 +5,7 @@ import aiohttp
 import asyncio
 from datetime import datetime
 
-@register("Daily_Report_Analysis_API", "e.e.", "联动StillAlive发送每日群聊以及与AI机器人私聊的消息汇总", "1.0.0")
+@register("astrbot_plugin_Daily_Report_Analysis_API", "e.e.", "联动StillAlive发送每日群聊以及与AI机器人私聊的消息汇总", "1.0.0")
 class DailyReportAnalysisAPI(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -144,6 +144,10 @@ class DailyReportAnalysisAPI(Star):
     @filter.after_message_sent()
     async def after_message_sent(self, event: AstrMessageEvent) -> None:
         """消息发送后的处理"""
+        pass
+
+    async def after_message_sent_handler(self, event: AstrMessageEvent, result=None):
+        """消息发送后的处理（兼容旧版本）"""
         pass
 
     async def hourly_task(self):
