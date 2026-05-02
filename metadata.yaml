@@ -1,6 +1,6 @@
 name: astrbot_plugin_Daily_Report_Analysis_API
-display_name: 日报分析 & 话题总结 API
-desc: 深度联动的群聊话题增量总结与人设化日报分析工具。
-version: v1.2.5
+display_name: StillAlive 日报分析 & 话题总结
+desc: 深度联动的群聊话题增量总结与人设化日报分析工具，支持获取 StillAlive 日报图片。
+version: v1.3.0
 author: e.e.
 repo: https://github.com/Yao-lin101/astrbot_plugin_Daily_Report_Analysis_API

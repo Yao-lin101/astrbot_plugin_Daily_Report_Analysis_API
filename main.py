@@ -3,19 +3,21 @@ import inspect
 from collections import defaultdict
 from datetime import datetime
 
-import aiohttp
-
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.message_components import At, Plain
+from astrbot.api.message_components import Image
 from astrbot.api.star import Context, Star, register
+
+from .api_service import APIService
+from .message_utils import format_full_message, get_bot_nickname
+from .report_handler import ReportHandler
 
 
 @register(
     "astrbot_plugin_Daily_Report_Analysis_API",
     "e.e.",
-    "联动StillAlive发送每日群聊以及与AI机器人私聊的消息汇总",
-    "1.2.5",
+    "联动StillAlive发送每日群聊以及与AI机器人私聊的消息汇总，并支持获取日报图片。",
+    "1.3.0",
 )
 class DailyReportAnalysisAPI(Star):
     def __init__(self, context: Context, config: dict = None):
@@ -35,18 +37,24 @@ class DailyReportAnalysisAPI(Star):
 
         self.private_messages = []
         self.config = config
-        self.internal_commands = []  # 将在 initialize 中自动填充
+        self.internal_commands = []
+        self.api_service = None
 
     async def initialize(self):
         """插件初始化"""
         if not self.config:
             self.config = self.context.get_config()
 
+        # 初始化 API 服务
+        target_url = self.config.get("target_url", "")
+        character_key = self.config.get("character_key", "")
+        self.api_service = APIService(target_url, character_key)
+
         # 自动识别插件内注册的所有指令名，实现自动屏蔽
         self._auto_collect_internal_commands()
 
         logger.info(
-            f"DailyReportAnalysisAPI: 插件已初始化。监控用户ID: {self.config.get('specific_user_id')}, 已自动注册屏蔽指令: {self.internal_commands}"
+            f"DailyReportAnalysisAPI: 插件已初始化。监控用户ID: {self.config.get('specific_user_id')}, 目标URL: {target_url}, 已自动注册屏蔽指令: {self.internal_commands}"
         )
 
     def _auto_collect_internal_commands(self):
@@ -59,72 +67,13 @@ class DailyReportAnalysisAPI(Star):
                     self.internal_commands.extend(filt.commands)
 
         if not self.internal_commands:
-            self.internal_commands = ["stillalive群总结", "stillalive清理缓存"]
+            self.internal_commands = [
+                "stillalive群总结",
+                "stillalive清理缓存",
+                "stillalive日报",
+            ]
         else:
             self.internal_commands = list(set(self.internal_commands))
-
-    async def _get_bot_nickname(self, event: AstrMessageEvent, group_id: str) -> str:
-        """获取机器人在群组中的昵称"""
-        if group_id in self.bot_nicknames:
-            return self.bot_nicknames[group_id]
-
-        if event:
-            try:
-                group_data = await event.get_group()
-                if group_data and group_data.members:
-                    self_id = str(event.get_self_id())
-                    for m in group_data.members:
-                        if str(m.user_id) == self_id:
-                            nick = m.nickname or m.user_id
-                            self.bot_nicknames[group_id] = str(nick)
-                            return str(nick)
-            except Exception:
-                pass
-
-        nickname = self.context.get_config().get("nickname")
-        if not nickname and event:
-            nickname = str(event.get_self_id())
-        return str(nickname or "机器人")
-
-    async def _resolve_nickname(
-        self, event: AstrMessageEvent, user_id: str, group_id: str
-    ) -> str:
-        """尝试解析任意用户的昵称"""
-        user_id = str(user_id)
-        # 如果是机器人自己
-        if user_id == str(event.get_self_id()):
-            return await self._get_bot_nickname(event, group_id)
-
-        # 尝试从群成员缓存找
-        try:
-            group_data = await event.get_group()
-            if group_data and group_data.members:
-                for m in group_data.members:
-                    if str(m.user_id) == user_id:
-                        return m.nickname or str(m.user_id)
-        except Exception:
-            pass
-
-        return user_id
-
-    async def _format_full_message(self, event: AstrMessageEvent) -> str:
-        """解析消息组件，保留并转化 At 信息为文本格式"""
-        full_content = ""
-        group_id = event.message_obj.group_id
-
-        for comp in event.message_obj.message:
-            if isinstance(comp, Plain):
-                full_content += comp.text
-            elif isinstance(comp, At):
-                # 获取被 At 人的 ID (不同平台属性名可能不同，通常为 qq 或 user_id)
-                target_id = getattr(comp, "qq", getattr(comp, "user_id", None))
-                if target_id:
-                    nickname = await self._resolve_nickname(event, target_id, group_id)
-                    full_content += f"@{nickname} "
-            # 其他组件（如表情）可以根据需要继续添加，目前仅处理文本和 At
-
-        # 如果解析结果为空（例如全是非文本组件），退回到原始 message_str
-        return full_content.strip() or event.message_str
 
     async def terminate(self):
         """插件销毁"""
@@ -132,40 +81,48 @@ class DailyReportAnalysisAPI(Star):
             timer.cancel()
         self.group_timers.clear()
 
-    async def send_to_api(self, data):
-        """发送数据到目标API"""
-        target_url = self.config.get("target_url")
-        character_key = self.config.get("character_key")
-
-        if not target_url or not character_key:
-            logger.error(
-                "DailyReportAnalysisAPI: 配置未设置：target_url 或 character_key"
-            )
-            return
-
-        headers = {"X-Character-Key": character_key, "Content-Type": "application/json"}
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    target_url, json=data, headers=headers
-                ) as response:
-                    if response.status == 200:
-                        logger.info(
-                            f"DailyReportAnalysisAPI: {data.get('type')} 发送成功"
-                        )
-                    else:
-                        logger.error(
-                            f"DailyReportAnalysisAPI: 发送失败，状态码：{response.status}"
-                        )
-        except Exception as e:
-            logger.error(f"DailyReportAnalysisAPI: 发送请求时出错：{str(e)}")
-
     def _check_permission(self, event: AstrMessageEvent) -> bool:
         """检查发送者是否为特定用户"""
         sender_id = str(event.get_sender_id())
         specific_user_id = str(self.config.get("specific_user_id", ""))
         return sender_id == specific_user_id
+
+    @filter.command("stillalive日报")
+    async def get_stillalive_report(self, event: AstrMessageEvent, date: str = None):
+        """获取并发送指定日期的日报图片。格式: stillalive日报 [YYYY-MM-DD]"""
+        if not self._check_permission(event):
+            yield event.plain_result("抱歉，您没有权限执行此指令。")
+            return
+
+        if not date:
+            date = datetime.now().strftime("%Y-%m-%d")
+
+        # 验证日期格式
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            yield event.plain_result(
+                "日期格式错误，请使用 YYYY-MM-DD 格式，例如: stillalive日报 2026-05-03"
+            )
+            return
+
+        yield event.plain_result(f"正在获取 {date} 的日报并生成图片，请稍候...")
+
+        report_data = await self.api_service.fetch_report(date)
+        if not report_data or report_data.get("error"):
+            error_msg = (
+                report_data.get("error", "接口返回异常")
+                if report_data
+                else "无法连接至服务器"
+            )
+            yield event.plain_result(f"获取日报失败: {error_msg}")
+            return
+
+        image_path = await ReportHandler.render_report(report_data)
+        if image_path:
+            yield event.chain_result([Image.fromFileSystem(image_path)])
+        else:
+            yield event.plain_result("图片生成失败，请检查日志。")
 
     @filter.command("stillalive群总结")
     async def manual_group_summary(self, event: AstrMessageEvent):
@@ -253,7 +210,7 @@ class DailyReportAnalysisAPI(Star):
             self.group_events[group_id] = event
 
             # 使用增强版解析逻辑保留 At 信息
-            message_content = await self._format_full_message(event)
+            message_content = await format_full_message(event)
 
             is_specific_user = sender_id == specific_user_id
             if is_specific_user:
@@ -296,7 +253,7 @@ class DailyReportAnalysisAPI(Star):
         else:
             # 私聊记录逻辑
             if sender_id == specific_user_id:
-                message_content = await self._format_full_message(event)
+                message_content = await format_full_message(event)
                 self.private_messages.append(
                     {"时间": time_str, "用户": message_content, "你的回复": ""}
                 )
@@ -339,7 +296,9 @@ class DailyReportAnalysisAPI(Star):
 
         user_nickname = self.user_nicknames.get(group_id, "用户")
         event = self.group_events.get(group_id)
-        bot_nickname = await self._get_bot_nickname(event, group_id)
+        bot_nickname = await get_bot_nickname(
+            self.context, event, group_id, self.bot_nicknames
+        )
 
         group_name = to_summarize[0].get("群名称", "未知群聊")
         last_time = to_summarize[-1].get("时间", "未知时间")
@@ -410,7 +369,7 @@ class DailyReportAnalysisAPI(Star):
                 ]
             },
         }
-        await self.send_to_api(data)
+        await self.api_service.send_data("/api/v1/status/sync/", data)
 
         self.last_summarized_id[group_id] = pending[last_user_msg_index]["id"]
         self.active_groups.discard(group_id)
@@ -439,7 +398,9 @@ class DailyReportAnalysisAPI(Star):
                 if event.message_obj.group
                 else "未知群聊"
             )
-            bot_name = await self._get_bot_nickname(event, group_id)
+            bot_name = await get_bot_nickname(
+                self.context, event, group_id, self.bot_nicknames
+            )
 
             self.message_id_counter[group_id] += 1
             msg_id = self.message_id_counter[group_id]
@@ -471,5 +432,5 @@ class DailyReportAnalysisAPI(Star):
                 "type": "qq_messages",
                 "data": {"private_messages": list(self.private_messages)},
             }
-            await self.send_to_api(data)
+            await self.api_service.send_data("/api/v1/status/sync/", data)
             self.private_messages = []

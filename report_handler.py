@@ -1,0 +1,186 @@
+import mistune
+
+from astrbot.api import html_renderer, logger
+
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        :root {
+            --blue-50: #eff6ff;
+            --blue-100: #dbeafe;
+            --blue-200: #bfdbfe;
+            --blue-400: #60a5fa;
+            --blue-500: #3b82f6;
+            --blue-600: #2563eb;
+            --blue-700: #1d4ed8;
+            --slate-50: #f8fafc;
+            --slate-100: #f1f5f9;
+            --slate-200: #e2e8f0;
+            --slate-700: #334155;
+            --slate-800: #1e293b;
+            --amber-100: #fef3c7;
+            --amber-700: #b45309;
+            --pink-600: #db2777;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f3f4f6;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--slate-100);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header h1 {
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: var(--slate-800);
+            margin: 0;
+        }
+
+        .calendar-icon {
+            color: var(--blue-500);
+            width: 20px;
+            height: 20px;
+        }
+
+        .badge {
+            padding: 2px 8px;
+            font-size: 0.75rem;
+            border-radius: 9999px;
+            background-color: var(--amber-100);
+            color: var(--amber-700);
+            margin-left: 8px;
+        }
+
+        .content {
+            padding: 24px;
+            color: var(--slate-700);
+            line-height: 1.6;
+        }
+
+        .prose h1 { font-size: 1.5rem; font-weight: 700; margin-top: 0; margin-bottom: 1rem; color: var(--slate-800); border-bottom: 2px solid var(--blue-100); padding-bottom: 8px; }
+        .prose h2 { font-size: 1.25rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--slate-800); }
+        .prose h3 { font-size: 1.125rem; font-weight: 500; margin-top: 1rem; margin-bottom: 0.5rem; color: var(--slate-800); }
+        .prose p { margin-bottom: 1rem; }
+        .prose strong { color: var(--slate-800); font-weight: 600; }
+        .prose ul, .prose ol { padding-left: 1.5rem; margin-bottom: 1rem; }
+        .prose li { margin-bottom: 0.25rem; }
+
+        .prose blockquote {
+            border-left: 4px solid var(--blue-400);
+            padding-left: 1rem;
+            font-style: italic;
+            margin: 1.5rem 0;
+            color: var(--slate-700);
+        }
+
+        .prose table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            border: 1px solid var(--slate-200);
+        }
+
+        .prose thead { background-color: var(--blue-50); }
+        .prose th { padding: 12px; text-align: left; font-size: 0.875rem; font-weight: 600; color: var(--blue-700); border-bottom: 2px solid var(--blue-200); }
+        .prose td { padding: 12px; font-size: 0.875rem; border-bottom: 1px solid var(--slate-100); }
+
+        .prose code {
+            background-color: var(--slate-100);
+            color: var(--pink-600);
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-size: 0.875rem;
+            font-family: monospace;
+        }
+
+        .prose pre {
+            background-color: var(--slate-50);
+            border: 1px solid var(--slate-200);
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+
+        .footer {
+            padding: 12px 24px;
+            border-top: 1px solid var(--slate-100);
+            font-size: 0.75rem;
+            color: #94a3b8;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <svg class="calendar-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+            <h1>{{ date }}</h1>
+            {% if is_hidden %}
+            <span class="badge">已隐藏</span>
+            {% endif %}
+        </div>
+        <div class="content prose">
+            {{ report_html | safe }}
+        </div>
+        <div class="footer">
+            Generated by AstrBot StillAlive Plugin
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+
+class ReportHandler:
+    @staticmethod
+    async def render_report(report_data: dict):
+        """将报告数据渲染成图片"""
+        date = report_data.get("date", "未知日期")
+        is_hidden = report_data.get("is_hidden", False)
+        markdown_content = report_data.get("markdown", "暂无内容")
+
+        # 预处理：增强加粗文本显示 (参考 TSX 中的 normalizeMarkdownFormatting)
+        # 这里使用 mistune 渲染 HTML
+        renderer = mistune.create_markdown(
+            plugins=["table", "strikethrough", "task_lists"]
+        )
+        report_html = renderer(markdown_content)
+
+        tmpl_data = {"date": date, "is_hidden": is_hidden, "report_html": report_html}
+
+        try:
+            # 渲染图片
+            image_path = await html_renderer.render_custom_template(
+                HTML_TEMPLATE, tmpl_data
+            )
+            return image_path
+        except Exception as e:
+            logger.error(f"ReportHandler: 渲染报告出错: {e}")
+            return None
