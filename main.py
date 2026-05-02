@@ -75,25 +75,27 @@ class DailyReportAnalysisAPI(Star, PluginKVStoreMixin):
         })
 
     @filter.after_message_sent()
-    async def after_message_sent_handler(self, event: AstrMessageEvent, result: MessageEventResult):
+    async def after_message_sent_handler(self, event: AstrMessageEvent):
         """消息发送后的处理，用于捕获机器人回复并发送到目标URL"""
         # 检查是否有私聊消息信息
         private_message_info = event.get_extra("private_message_info")
         if private_message_info:
-            # 获取机器人回复的纯文本
-            bot_message = result.get_plain_text()
-            # 获取机器人名称（使用平台信息作为机器人名称）
-            bot_name = event.get_platform_name()
-            # 发送对话内容到目标URL
-            await self._send_private_message_report(
-                private_message_info["time_str"],
-                private_message_info["user_name"],
-                private_message_info["user_message"],
-                bot_name,
-                bot_message
-            )
-            # 清除extra信息，避免重复处理
-            event.set_extra("private_message_info", None)
+            # 获取机器人回复的纯文本（从事件结果中获取）
+            result = event.get_result()
+            if result:
+                bot_message = result.get_plain_text()
+                # 获取机器人名称（使用平台信息作为机器人名称）
+                bot_name = event.get_platform_name()
+                # 发送对话内容到目标URL
+                await self._send_private_message_report(
+                    private_message_info["time_str"],
+                    private_message_info["user_name"],
+                    private_message_info["user_message"],
+                    bot_name,
+                    bot_message
+                )
+                # 清除extra信息，避免重复处理
+                event.set_extra("private_message_info", None)
 
     @filter.event_message_type(EventMessageType.GROUP_MESSAGE)
     async def handle_group_message(self, event: AstrMessageEvent):
