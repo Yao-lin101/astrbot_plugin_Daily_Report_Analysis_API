@@ -1,17 +1,17 @@
 {
   "target_url": {
-    "description": "接收消息的API地址",
+    "description": "目标URL",
     "type": "string",
-    "default": ""
+    "hint": "消息汇总发送的目标API地址"
   },
   "character_key": {
-    "description": "用于HTTP请求的X-Character-Key头",
+    "description": "角色秘钥",
     "type": "string",
-    "default": ""
+    "hint": "用于API请求的X-Character-Key头"
   },
   "specific_user_id": {
-    "description": "需要监控的用户ID",
+    "description": "特定用户ID",
     "type": "string",
-    "default": ""
+    "hint": "需要监控的特定用户ID"
   }
 }
