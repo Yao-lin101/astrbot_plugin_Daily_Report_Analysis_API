@@ -29,19 +29,22 @@ HTML_TEMPLATE = """
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background-color: white;
+            background-color: #f1f5f9; /* 稍微深一点的背景，衬托中间的内容 */
             margin: 0;
             padding: 0;
-            width: 100%; /* 撑满整张图片，解决左侧一半的问题 */
-            font-size: 20px; /* 进一步提升字号 */
+            width: 100%;
+            zoom: 1.4; /* 核心优化：变相提升分辨率，让文字更大更清晰 */
         }
 
         .container {
             width: 100%;
+            max-width: 600px; /* 限制最大宽度 */
+            margin: 0 auto; /* 居中显示 */
             background: white;
             overflow: hidden;
             display: flex;
             flex-direction: column;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1); /* 增加阴影，更有质感 */
         }
 
         .header {
@@ -173,15 +176,12 @@ class ReportHandler:
         tmpl_data = {"date": date, "is_hidden": is_hidden, "report_html": report_html}
 
         try:
-            # 渲染图片：尝试直接传递 width 参数，并保持 100 质量
+            # 极简渲染参数：只保留质量，避开远程服务器不支持的参数导致的 404
             image_path = await html_renderer.render_custom_template(
                 HTML_TEMPLATE, 
                 tmpl_data,
                 options={
-                    "quality": 100,
-                    "device_scale_factor": 2,
-                    "width": 600, 
-                    "height": 1000
+                    "quality": 100
                 }
             )
             return image_path
