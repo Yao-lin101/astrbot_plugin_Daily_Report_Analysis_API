@@ -40,6 +40,14 @@ class DailyReportAnalysisAPI(Star):
         self.internal_commands = []
         self.api_service = None
 
+    def _get_resp(self, key: str, default: str = "", **kwargs) -> str:
+        """从配置获取回复模板并格式化"""
+        tmpl = self.config.get(key, default)
+        try:
+            return tmpl.format(**kwargs)
+        except Exception:
+            return tmpl
+
     async def initialize(self):
         """插件初始化"""
         if not self.config:
@@ -91,7 +99,7 @@ class DailyReportAnalysisAPI(Star):
     async def get_stillalive_report(self, event: AstrMessageEvent, date: str = None):
         """获取并发送指定日期的日报图片。格式: stillalive日报 [YYYY-MM-DD]"""
         if not self._check_permission(event):
-            yield event.plain_result("只有获得授权的勇者才能使用这个技能呢。爱丽丝感到很抱歉！")
+            yield event.plain_result(self._get_resp("resp_permission_denied"))
             return
 
         if not date:
@@ -101,16 +109,14 @@ class DailyReportAnalysisAPI(Star):
         try:
             datetime.strptime(date, "%Y-%m-%d")
         except ValueError:
-            yield event.plain_result(
-                "呜哇，任务失败了。爱丽丝无法识别这个日期格式，请使用 YYYY-MM-DD 格式（例如：stillalive日报 2026-05-03）再试一次吧！"
-            )
+            yield event.plain_result(self._get_resp("resp_invalid_date"))
             return
 
-        yield event.plain_result(f"爱丽丝收到任务！正在努力同步 {date} 的冒险日志并生成图片，请勇者稍等一下哦！")
+        yield event.plain_result(self._get_resp("resp_daily_loading", date=date))
 
         report_data = await self.api_service.fetch_report(date)
         if not report_data:
-            yield event.plain_result(f"连接冒险数据库失败！爱丽丝无法获取 {date} 的日报信息，请检查网络连接！")
+            yield event.plain_result(self._get_resp("resp_daily_conn_error", date=date))
             return
 
         # 检查错误字段 (包含 error 和 detail)
@@ -118,9 +124,9 @@ class DailyReportAnalysisAPI(Star):
         if error_msg:
             # 针对性提示：日报不存在
             if "日报不存在" in error_msg or "No DailyReport matches" in error_msg:
-                yield event.plain_result(f"寻找任务目标失败。在 {date} 的地图里没有找到任何日报记录呢，爱丽丝建议勇者再等一等！")
+                yield event.plain_result(self._get_resp("resp_daily_not_found", date=date))
             else:
-                yield event.plain_result(f"获取日报时触发了未知陷阱：{error_msg}。爱丽丝正在尝试修复！")
+                yield event.plain_result(self._get_resp("resp_daily_unknown_error", error=error_msg))
             return
 
         image_path = await ReportHandler.render_report(report_data)
@@ -135,23 +141,23 @@ class DailyReportAnalysisAPI(Star):
                     base64_str = base64.b64encode(img_bytes).decode('utf-8')
                     yield event.chain_result([Image.fromBase64(base64_str)])
                 else:
-                    yield event.plain_result("寻找道具失败！爱丽丝渲染出的图片文件在背包里找不到了。")
+                    yield event.plain_result(self._get_resp("resp_image_file_not_found"))
             except Exception as e:
                 logger.error(f"发送 Base64 图片失败: {e}")
-                yield event.plain_result(f"爱丽丝在传送图片时被干扰了：{e}")
+                yield event.plain_result(self._get_resp("resp_image_transmit_error", error=str(e)))
         else:
-            yield event.plain_result("爱丽丝在渲染图片时 MP 不足了……生成图片失败，请检查冒险日志（后台日志）！")
+            yield event.plain_result(self._get_resp("resp_render_error"))
 
     @filter.command("stillalive群总结")
     async def manual_group_summary(self, event: AstrMessageEvent):
         """手动触发当前群聊的总结"""
         if not self._check_permission(event):
-            yield event.plain_result("抱歉，您没有权限执行此指令。")
+            yield event.plain_result(self._get_resp("resp_permission_denied"))
             return
 
         group_id = event.message_obj.group_id
         if not group_id:
-            yield event.plain_result("该指令仅在群聊中有效。")
+            yield event.plain_result(self._get_resp("resp_group_only"))
             return
 
         messages = self.group_messages_map.get(group_id, [])
@@ -164,10 +170,10 @@ class DailyReportAnalysisAPI(Star):
         )
 
         if not has_specific_user:
-            yield event.plain_result("当前未总结的消息中不包含特定用户的发言。")
+            yield event.plain_result(self._get_resp("resp_no_specific_user"))
             return
 
-        yield event.plain_result("正在生成当前群聊话题总结...")
+        yield event.plain_result(self._get_resp("resp_summary_start"))
 
         try:
             if group_id in self.group_timers:
@@ -175,21 +181,21 @@ class DailyReportAnalysisAPI(Star):
                 self.group_timers.pop(group_id, None)
 
             await self._summarize_single_group(group_id)
-            yield event.plain_result("总结完成并已发送至服务端。")
+            yield event.plain_result(self._get_resp("resp_summary_success"))
         except Exception as e:
             logger.error(f"DailyReportAnalysisAPI: 手动总结失败: {e}")
-            yield event.plain_result(f"发送失败：{e}")
+            yield event.plain_result(self._get_resp("resp_image_transmit_error", error=str(e)))
 
     @filter.command("stillalive清理缓存")
     async def clear_cache(self, event: AstrMessageEvent):
         """手动重置总结进度"""
         if not self._check_permission(event):
-            yield event.plain_result("抱歉，您没有权限执行此指令。")
+            yield event.plain_result(self._get_resp("resp_permission_denied"))
             return
 
         group_id = event.message_obj.group_id
         if not group_id:
-            yield event.plain_result("该指令仅在群聊中有效。")
+            yield event.plain_result(self._get_resp("resp_group_only"))
             return
 
         self.last_summarized_id[group_id] = 0
@@ -199,7 +205,7 @@ class DailyReportAnalysisAPI(Star):
             self.group_timers[group_id].cancel()
             self.group_timers.pop(group_id, None)
 
-        yield event.plain_result("已重置该群的总结进度缓存。")
+        yield event.plain_result(self._get_resp("resp_summary_success")) # 这里借用成功的提示
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):
@@ -344,22 +350,29 @@ class DailyReportAnalysisAPI(Star):
                     )
                     system_prompt = default_persona.get("prompt")
 
-                prompt = (
-                    f"对话背景：你在本群的昵称是【{bot_nickname}】，特定用户的昵称是【{user_nickname}】。\n"
-                    f"角色说明（重要）：\n"
-                    f"- 消息中带有【你】前缀的是你自己（{bot_nickname}）的发言；\n"
-                    f"- 带有【用户】前缀的是特定用户（{user_nickname}）的发言；\n"
-                    f"- 带有【群友】前缀的是其他群成员的发言，他们不是你，也不是特定用户。\n\n"
-                    f"任务目标：精炼地总结以下这段群聊记录（50字以内）。\n"
-                    f"特别要求：请务必以你的人设口吻进行总结，并重点体现出特定用户【{user_nickname}】参与了哪些互动或发表了什么观点。\n"
-                    f"输出格式要求（务必严格遵守）：\n"
-                    f"话题：<这里填写一句话话题>\n"
-                    f"内容：<这里填写总结内容>\n"
-                    f"规则：1. 不要使用Markdown格式符号；2. 不要添加多余解释；3. 不要改变结构。\n\n"
-                    f"--- 对话记录开始 ---\n"
-                    f"{dialogue_text}\n"
-                    f"--- 对话记录结束 ---"
-                )
+                # 优先从配置中读取自定义 Prompt
+                custom_prompt_tmpl = self.config.get("quality_v2_prompt")
+                if custom_prompt_tmpl:
+                    # 如果有自定义 Prompt，支持 ${messages_text} 变量
+                    prompt = custom_prompt_tmpl.replace("${messages_text}", dialogue_text)
+                else:
+                    # 使用默认 Prompt
+                    prompt = (
+                        f"对话背景：你在本群的昵称是【{bot_nickname}】，特定用户的昵称是【{user_nickname}】。\n"
+                        f"角色说明（重要）：\n"
+                        f"- 消息中带有【你】前缀的是你自己（{bot_nickname}）的发言；\n"
+                        f"- 带有【用户】前缀的是特定用户（{user_nickname}）的发言；\n"
+                        f"- 带有【群友】前缀的是其他群成员的发言，他们不是你，也不是特定用户。\n\n"
+                        f"任务目标：精炼地总结以下这段群聊记录（50字以内）。\n"
+                        f"特别要求：请务必以你的人设口吻进行总结，并重点体现出特定用户【{user_nickname}】参与了哪些互动或发表了什么观点。\n"
+                        f"输出格式要求（务必严格遵守）：\n"
+                        f"话题：<这里填写一句话话题>\n"
+                        f"内容：<这里填写总结内容>\n"
+                        f"规则：1. 不要使用Markdown格式符号；2. 不要添加多余解释；3. 不要改变结构。\n\n"
+                        f"--- 对话记录开始 ---\n"
+                        f"{dialogue_text}\n"
+                        f"--- 对话记录结束 ---"
+                    )
 
                 response = await self.context.llm_generate(
                     chat_provider_id=provider_id,
