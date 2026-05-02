@@ -196,7 +196,8 @@ class ReportHandler:
                 
                 async with async_playwright() as p:
                     browser = await p.chromium.launch()
-                    context = await browser.new_context(viewport={'width': 600, 'height': 800}, device_scale_factor=2)
+                    # 模拟服务器环境：将宽度设为 1280px (标准宽视口)，倍率设为 1
+                    context = await browser.new_context(viewport={'width': 1280, 'height': 800}, device_scale_factor=1)
                     page = await context.new_page()
                     await page.set_content(final_html)
                     await page.wait_for_load_state("networkidle")
