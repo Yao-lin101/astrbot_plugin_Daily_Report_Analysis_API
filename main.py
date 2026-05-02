@@ -67,21 +67,21 @@ class DailyReportAnalysisAPI(Star, PluginKVStoreMixin):
         time_str = datetime.fromtimestamp(timestamp).strftime("%H:%M")
         user_name = event.get_sender_name()
 
-        # 存储消息信息到事件的extra中，供after_message_sent处理器使用
+        # 存储消息信息到事件的extra中，供on_llm_response处理器使用
         event.set_extra("private_message_info", {
             "time_str": time_str,
             "user_name": user_name,
             "user_message": user_message
         })
 
-    @filter.after_message_sent()
-    async def after_message_sent_handler(self, event: AstrMessageEvent, result: MessageEventResult):
-        """消息发送后的处理，用于捕获机器人回复并发送到目标URL"""
+    @filter.on_llm_response()
+    async def on_llm_response_handler(self, event: AstrMessageEvent, response):
+        """当LLM回复后处理"""
         # 检查是否有私聊消息信息
         private_message_info = event.get_extra("private_message_info")
         if private_message_info:
             # 获取机器人回复的纯文本
-            bot_message = result.get_plain_text()
+            bot_message = response.completion_text
             # 获取机器人名称（使用平台信息作为机器人名称）
             bot_name = event.get_platform_name()
             # 发送对话内容到目标URL
