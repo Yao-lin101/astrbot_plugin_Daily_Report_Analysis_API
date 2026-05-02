@@ -176,13 +176,10 @@ class ReportHandler:
         tmpl_data = {"date": date, "is_hidden": is_hidden, "report_html": report_html}
 
         try:
-            # 极简渲染参数：只保留质量，避开远程服务器不支持的参数导致的 404
+            # 回归零参数调用：完全同步官方默认行为，避免任何参数导致的远程 404
             image_path = await html_renderer.render_custom_template(
                 HTML_TEMPLATE, 
-                tmpl_data,
-                options={
-                    "quality": 100
-                }
+                tmpl_data
             )
             return image_path
         except Exception as e:
