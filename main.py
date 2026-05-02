@@ -13,7 +13,7 @@ from astrbot.api.star import Context, Star, register
     "astrbot_plugin_Daily_Report_Analysis_API",
     "e.e.",
     "联动StillAlive发送每日群聊以及与AI机器人私聊的消息汇总",
-    "1.1.7",
+    "1.2.0",
 )
 class DailyReportAnalysisAPI(Star):
     def __init__(self, context: Context, config: dict = None):
@@ -148,33 +148,26 @@ class DailyReportAnalysisAPI(Star):
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):
         """监听消息"""
-        sender_id = str(event.get_sender_id())
         message_content = event.message_str
 
         if not message_content:
             return
 
-        if message_content.startswith(("/", ".")):
-            return
-        if message_content.strip() in self.internal_commands:
+        # 仅屏蔽本插件的指令（防止在总结记录中出现）
+        if any(cmd in message_content for cmd in self.internal_commands):
             return
 
         specific_user_id = str(self.config.get("specific_user_id", ""))
         if not specific_user_id:
             return
 
+        sender_id = str(event.get_sender_id())
         now = datetime.now().timestamp()
         time_str = datetime.fromtimestamp(event.message_obj.timestamp).strftime("%H:%M")
         sender_name = event.get_sender_name()
 
-        # 处理私聊消息
-        if not event.message_obj.group_id:
-            if sender_id == specific_user_id:
-                self.private_messages.append(
-                    {"时间": time_str, "用户": message_content, "你的回复": ""}
-                )
         # 处理群聊消息
-        else:
+        if event.message_obj.group_id:
             group_id = event.message_obj.group_id
             group_name = (
                 event.message_obj.group.group_name
@@ -220,6 +213,12 @@ class DailyReportAnalysisAPI(Star):
 
                 self.group_timers[group_id] = asyncio.create_task(
                     self._delay_summarize_task(group_id, 600)
+                )
+        else:
+            # 私聊记录逻辑
+            if sender_id == specific_user_id:
+                self.private_messages.append(
+                    {"时间": time_str, "用户": message_content, "你的回复": ""}
                 )
 
     async def _delay_summarize_task(self, group_id, delay):
@@ -308,7 +307,7 @@ class DailyReportAnalysisAPI(Star):
                     f"DailyReportAnalysisAPI: 请求总结。使用人格 ID: {persona_id or '默认'}, 系统提示词长度: {len(system_prompt) if system_prompt else 0}"
                 )
 
-                # 强化 Prompt 指令，要求使用人设口吻，重点体现特定用户，并严格遵守输出规范
+                # 强化 Prompt 指令
                 prompt = (
                     f"对话背景：你在本群的昵称是【{bot_nickname}】，特定用户的昵称是【{user_nickname}】。\n"
                     f"任务目标：精炼地总结以下这段群聊记录（50字以内）。\n"
