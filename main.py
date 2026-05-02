@@ -141,7 +141,8 @@ class DailyReportAnalysisAPI(Star):
                     await self.send_to_api(data)
                     break
 
-    async def after_message_sent_handler(self, event: AstrMessageEvent, result):
+    @filter.after_message_sent()
+    async def after_message_sent(self, event: AstrMessageEvent) -> None:
         """消息发送后的处理"""
         pass
 
