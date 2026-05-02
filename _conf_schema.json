@@ -13,5 +13,12 @@
     "description": "特定用户ID",
     "type": "string",
     "hint": "需要监控的特定用户ID"
+  },
+  "summary_provider_id": {
+    "description": "LLM Provider ID (用于话题总结)",
+    "type": "string",
+    "_special": "select_provider",
+    "default": "",
+    "hint": "选择用于群聊话题总结的 LLM Provider。留空则不进行总结。"
   }
 }

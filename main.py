@@ -97,11 +97,7 @@ class DailyReportAnalysisAPI(Star):
             if sender_id == specific_user_id:
                 logger.info(f"DailyReportAnalysisAPI: 记录私聊消息 - {sender_name}")
                 self.private_messages.append(
-                    {
-                        "时间": time_str,
-                        "用户": message_content,  # 按照文档格式：Key为"用户昵称"，Value为内容
-                        "你的回复": "",
-                    }
+                    {"时间": time_str, "用户": message_content, "你的回复": ""}
                 )
         # 处理群聊消息
         else:
@@ -120,7 +116,7 @@ class DailyReportAnalysisAPI(Star):
             msg_obj = {
                 "时间": time_str,
                 "群名称": group_name,
-                f"{prefix}{sender_name}": message_content,
+                "content": f"{prefix}{sender_name}: {message_content}",
             }
             self.group_messages_map[group_id].append(msg_obj)
 
@@ -137,16 +133,10 @@ class DailyReportAnalysisAPI(Star):
 
         if not event.message_obj.group_id:
             # 私聊回复
-            if self.private_messages and not self.private_messages[-1].get(
-                "你的回复"
-            ):
+            if self.private_messages and not self.private_messages[-1].get("你的回复"):
                 self.private_messages[-1]["你的回复"] = reply_text
                 logger.info("DailyReportAnalysisAPI: 私聊对话完成，立即发送")
                 await self._send_private_immediately()
-        else:
-            # 群聊回复（通常特定用户对话不会触发机器人回复的记录要求，但按文档逻辑群聊是每小时汇总）
-            # 如果需要记录机器人对特定用户的回复，可以扩展此处逻辑
-            pass
 
     async def _send_private_immediately(self):
         """立即发送私聊消息"""
@@ -165,16 +155,45 @@ class DailyReportAnalysisAPI(Star):
             await self._check_and_send_groups()
 
     async def _check_and_send_groups(self):
-        """汇总并发送特定用户参与过的群聊对话"""
-        all_to_send = []
+        """汇总并总结特定用户参与过的群聊对话"""
+        summarized_results = []
 
-        # 仅搜寻特定用户参与过的群组对话
+        provider_id = self.config.get("summary_provider_id")
+
         for group_id in list(self.active_groups):
             if group_id in self.group_messages_map:
-                all_to_send.extend(self.group_messages_map[group_id])
+                messages = self.group_messages_map[group_id]
+                if not messages:
+                    continue
 
-        if all_to_send:
-            data = {"type": "qq_messages", "data": {"group_messages": all_to_send}}
+                group_name = messages[0].get("群名称", "未知群聊")
+                last_time = messages[-1].get("时间", "未知时间")
+
+                # 构建对话文本
+                dialogue_text = "\n".join([m["content"] for m in messages])
+
+                if provider_id:
+                    try:
+                        prompt = f"以下是一段群聊记录，请精炼地总结这段对话的话题和主要内容（50字以内）：\n\n{dialogue_text}"
+                        response = await self.context.llm_generate(
+                            chat_provider_id=provider_id, prompt=prompt
+                        )
+                        summary = response.completion_text.strip()
+                    except Exception as e:
+                        logger.error(f"DailyReportAnalysisAPI: 总结失败: {e}")
+                        summary = "（总结失败）"
+                else:
+                    summary = dialogue_text[:100] + "..."  # 没配置 LLM 时简单截断
+
+                summarized_results.append(
+                    {"时间": last_time, "群名称": group_name, "话题总结": summary}
+                )
+
+        if summarized_results:
+            data = {
+                "type": "qq_messages",
+                "data": {"group_messages": summarized_results},
+            }
             await self.send_to_api(data)
 
         # 清理本周期数据
