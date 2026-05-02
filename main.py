@@ -350,29 +350,22 @@ class DailyReportAnalysisAPI(Star):
                     )
                     system_prompt = default_persona.get("prompt")
 
-                # 优先从配置中读取自定义 Prompt
-                custom_prompt_tmpl = self.config.get("quality_v2_prompt")
-                if custom_prompt_tmpl:
-                    # 如果有自定义 Prompt，支持 ${messages_text} 变量
-                    prompt = custom_prompt_tmpl.replace("${messages_text}", dialogue_text)
-                else:
-                    # 使用默认 Prompt
-                    prompt = (
-                        f"对话背景：你在本群的昵称是【{bot_nickname}】，特定用户的昵称是【{user_nickname}】。\n"
-                        f"角色说明（重要）：\n"
-                        f"- 消息中带有【你】前缀的是你自己（{bot_nickname}）的发言；\n"
-                        f"- 带有【用户】前缀的是特定用户（{user_nickname}）的发言；\n"
-                        f"- 带有【群友】前缀的是其他群成员的发言，他们不是你，也不是特定用户。\n\n"
-                        f"任务目标：精炼地总结以下这段群聊记录（50字以内）。\n"
-                        f"特别要求：请务必以你的人设口吻进行总结，并重点体现出特定用户【{user_nickname}】参与了哪些互动或发表了什么观点。\n"
-                        f"输出格式要求（务必严格遵守）：\n"
-                        f"话题：<这里填写一句话话题>\n"
-                        f"内容：<这里填写总结内容>\n"
-                        f"规则：1. 不要使用Markdown格式符号；2. 不要添加多余解释；3. 不要改变结构。\n\n"
-                        f"--- 对话记录开始 ---\n"
-                        f"{dialogue_text}\n"
-                        f"--- 对话记录结束 ---"
-                    )
+                prompt = (
+                    f"对话背景：你在本群的昵称是【{bot_nickname}】，特定用户的昵称是【{user_nickname}】。\n"
+                    f"角色说明（重要）：\n"
+                    f"- 消息中带有【你】前缀的是你自己（{bot_nickname}）的发言；\n"
+                    f"- 带有【用户】前缀的是特定用户（{user_nickname}）的发言；\n"
+                    f"- 带有【群友】前缀的是其他群成员的发言，他们不是你，也不是特定用户。\n\n"
+                    f"任务目标：精炼地总结以下这段群聊记录（50字以内）。\n"
+                    f"特别要求：请务必以你的人设口吻进行总结，并重点体现出特定用户【{user_nickname}】参与了哪些互动或发表了什么观点。\n"
+                    f"输出格式要求（务必严格遵守）：\n"
+                    f"话题：<这里填写一句话话题>\n"
+                    f"内容：<这里填写总结内容>\n"
+                    f"规则：1. 不要使用Markdown格式符号；2. 不要添加多余解释；3. 不要改变结构。\n\n"
+                    f"--- 对话记录开始 ---\n"
+                    f"{dialogue_text}\n"
+                    f"--- 对话记录结束 ---"
+                )
 
                 response = await self.context.llm_generate(
                     chat_provider_id=provider_id,
