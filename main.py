@@ -75,7 +75,7 @@ class DailyReportAnalysisAPI(Star, PluginKVStoreMixin):
         })
 
     @filter.after_message_sent()
-    async def after_message_sent_handler(self, event: AstrMessageEvent):
+    async def after_message_sent_handler(self, event: AstrMessageEvent, *args, **kwargs):
         """消息发送后的处理，用于捕获机器人回复并发送到目标URL"""
         # 检查是否有私聊消息信息
         private_message_info = event.get_extra("private_message_info")
