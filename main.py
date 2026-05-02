@@ -13,7 +13,7 @@ from astrbot.api.star import Context, Star, register
     "astrbot_plugin_Daily_Report_Analysis_API",
     "e.e.",
     "联动StillAlive发送每日群聊以及与AI机器人私聊的消息汇总",
-    "1.1.2",
+    "1.1.3",
 )
 class DailyReportAnalysisAPI(Star):
     def __init__(self, context: Context, config: dict = None):
@@ -255,12 +255,10 @@ class DailyReportAnalysisAPI(Star):
                 break
 
         if last_user_msg_index == -1:
-            # 如果这一段里完全没有特定用户的发言，则不总结
             self.active_groups.discard(group_id)
             return
 
-        # 3. 准备发送给 LLM 的内容：包含顺延出的所有后续消息（如机器人回复）
-        # 这样总结里能看到互动的结尾
+        # 3. 准备发送给 LLM 的内容：包含顺延出的所有后续消息
         to_summarize = pending
 
         user_nickname = self.user_nicknames.get(group_id, "用户")
@@ -289,9 +287,28 @@ class DailyReportAnalysisAPI(Star):
         provider_id = self.config.get("summary_provider_id")
         if provider_id:
             try:
+                # 获取插件指定人格或全局默认人格
+                persona_id = self.config.get("plugin_specific_persona_id")
+                system_prompt = None
+                if persona_id:
+                    persona_v3 = self.context.persona_manager.get_persona_v3_by_id(
+                        persona_id
+                    )
+                    if persona_v3:
+                        system_prompt = persona_v3.get("prompt")
+
+                if not system_prompt:
+                    # 尝试获取全局默认人格
+                    default_persona = (
+                        await self.context.persona_manager.get_default_persona_v3()
+                    )
+                    system_prompt = default_persona.get("prompt")
+
                 prompt = f"以下是一段群聊记录，请精炼地总结这段对话的话题和主要内容（50字以内）：\n\n{dialogue_text}"
                 response = await self.context.llm_generate(
-                    chat_provider_id=provider_id, prompt=prompt
+                    chat_provider_id=provider_id,
+                    system_prompt=system_prompt,
+                    prompt=prompt,
                 )
                 summary = response.completion_text.strip()
             except Exception as e:
@@ -317,9 +334,7 @@ class DailyReportAnalysisAPI(Star):
         }
         await self.send_to_api(data)
 
-        # 4. 关键：更新快照 ID 到特定用户最后一次发言的位置
-        # 下一次总结将从 ID > last_user_msg_id 开始，
-        # 意味着刚才那些“顺延消息”会出现在下一次总结的开头
+        # 4. 快照 ID 推进到特定用户最后一次发言
         self.last_summarized_id[group_id] = pending[last_user_msg_index]["id"]
         self.active_groups.discard(group_id)
 

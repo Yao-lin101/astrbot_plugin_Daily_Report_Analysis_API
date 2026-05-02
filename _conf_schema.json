@@ -20,5 +20,12 @@
     "_special": "select_provider",
     "default": "",
     "hint": "选择用于群聊话题总结的 LLM Provider。留空则不进行总结。"
+  },
+  "plugin_specific_persona_id": {
+    "description": "插件指定人格 ID",
+    "type": "string",
+    "_special": "select_persona",
+    "default": "",
+    "hint": "在此处选择系统中已定义的人设。若此处未选择，则仍会尝试识别全局默认人格。"
   }
 }
