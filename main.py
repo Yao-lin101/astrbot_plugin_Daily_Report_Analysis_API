@@ -111,7 +111,9 @@ class DailyReportAnalysisAPI(Star):
         # 处理私聊消息
         if not event.message_obj.group_id:
             if sender_id == specific_user_id:
-                logger.info(f"DailyReportAnalysisAPI: 记录私聊消息 - {sender_name}")
+                logger.debug(
+                    f"DailyReportAnalysisAPI: 记录私聊消息 - {sender_name}: {message_content}"
+                )
                 self.private_messages.append(
                     {"时间": time_str, "用户": message_content, "你的回复": ""}
                 )
@@ -129,10 +131,15 @@ class DailyReportAnalysisAPI(Star):
             else:
                 prefix = "【群友】"
 
+            msg_content_formatted = f"{prefix}{sender_name}: {message_content}"
+            logger.debug(
+                f"DailyReportAnalysisAPI: 记录群聊消息 [{group_name}] - {msg_content_formatted}"
+            )
+
             msg_obj = {
                 "时间": time_str,
                 "群名称": group_name,
-                "content": f"{prefix}{sender_name}: {message_content}",
+                "content": msg_content_formatted,
             }
             self.group_messages_map[group_id].append(msg_obj)
 
@@ -176,17 +183,20 @@ class DailyReportAnalysisAPI(Star):
 
         provider_id = self.config.get("summary_provider_id")
 
-        # 复制数据以避免在总结过程中被修改
-        active_groups_snapshot = list(self.active_groups)
-        group_messages_map_snapshot = dict(self.group_messages_map)
-
-        # 清理本周期数据（在总结前清理，防止重叠）
+        # 复制并清空
+        group_messages_snapshot = dict(self.group_messages_map)
         self.group_messages_map.clear()
+
+        active_groups_snapshot = list(self.active_groups)
         self.active_groups.clear()
 
+        logger.debug(
+            f"DailyReportAnalysisAPI: 开始汇总群聊。活跃群组数: {len(active_groups_snapshot)}"
+        )
+
         for group_id in active_groups_snapshot:
-            if group_id in group_messages_map_snapshot:
-                messages = group_messages_map_snapshot[group_id]
+            if group_id in group_messages_snapshot:
+                messages = group_messages_snapshot[group_id]
                 if not messages:
                     continue
 
@@ -195,6 +205,9 @@ class DailyReportAnalysisAPI(Star):
 
                 # 构建对话文本
                 dialogue_text = "\n".join([m["content"] for m in messages])
+                logger.debug(
+                    f"DailyReportAnalysisAPI: 正在总结群 [{group_name}]，消息条数: {len(messages)}，内容片段: {dialogue_text[:50]}..."
+                )
 
                 if provider_id:
                     try:
@@ -203,6 +216,9 @@ class DailyReportAnalysisAPI(Star):
                             chat_provider_id=provider_id, prompt=prompt
                         )
                         summary = response.completion_text.strip()
+                        logger.debug(
+                            f"DailyReportAnalysisAPI: 群 [{group_name}] 总结结果: {summary}"
+                        )
                     except Exception as e:
                         logger.error(f"DailyReportAnalysisAPI: 总结失败: {e}")
                         summary = "（总结失败）"
@@ -219,3 +235,5 @@ class DailyReportAnalysisAPI(Star):
                 "data": {"group_messages": summarized_results},
             }
             await self.send_to_api(data)
+        else:
+            logger.debug("DailyReportAnalysisAPI: 本次汇总无有效群聊数据")
