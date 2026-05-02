@@ -14,7 +14,7 @@ from astrbot.api.star import Context, Star, register
     "astrbot_plugin_Daily_Report_Analysis_API",
     "e.e.",
     "联动StillAlive发送每日群聊以及与AI机器人私聊的消息汇总",
-    "1.2.3",
+    "1.2.4",
 )
 class DailyReportAnalysisAPI(Star):
     def __init__(self, context: Context, config: dict = None):
@@ -152,7 +152,7 @@ class DailyReportAnalysisAPI(Star):
             yield event.plain_result("当前未总结的消息中不包含特定用户的发言。")
             return
 
-        yield event.plain_result("正在生成当前群聊的话题总结并发送...")
+        yield event.plain_result("正在生成当前群聊话题总结...")
 
         try:
             if group_id in self.group_timers:
@@ -160,7 +160,7 @@ class DailyReportAnalysisAPI(Star):
                 self.group_timers.pop(group_id, None)
 
             await self._summarize_single_group(group_id)
-            yield event.plain_result("当前群聊总结发送完成。")
+            yield event.plain_result("总结完成并已发送至服务端。")
         except Exception as e:
             logger.error(f"DailyReportAnalysisAPI: 手动总结失败: {e}")
             yield event.plain_result(f"发送失败：{e}")
@@ -184,7 +184,7 @@ class DailyReportAnalysisAPI(Star):
             self.group_timers[group_id].cancel()
             self.group_timers.pop(group_id, None)
 
-        yield event.plain_result("已重置总结进度。")
+        yield event.plain_result("已重置该群的总结进度缓存。")
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):
@@ -194,7 +194,7 @@ class DailyReportAnalysisAPI(Star):
         if not message_content:
             return
 
-        # 仅屏蔽本插件的指令（防止在总结记录中出现）
+        # 仅屏蔽本插件的指令
         if any(cmd in message_content for cmd in self.internal_commands):
             return
 
@@ -227,7 +227,6 @@ class DailyReportAnalysisAPI(Star):
             self.message_id_counter[group_id] += 1
             msg_id = self.message_id_counter[group_id]
 
-            # 使用更具语义化的前缀
             msg_content_formatted = f"{prefix}{sender_name}: {message_content}"
             msg_obj = {
                 "id": msg_id,
@@ -257,7 +256,6 @@ class DailyReportAnalysisAPI(Star):
                     self._delay_summarize_task(group_id, 600)
                 )
         else:
-            # 私聊记录逻辑
             if sender_id == specific_user_id:
                 self.private_messages.append(
                     {"时间": time_str, "用户": message_content, "你的回复": ""}
@@ -303,7 +301,6 @@ class DailyReportAnalysisAPI(Star):
         to_summarize = pending
 
         user_nickname = self.user_nicknames.get(group_id, "用户")
-        # 获取机器人昵称
         event = self.group_events.get(group_id)
         bot_nickname = await self._get_bot_nickname(event, group_id)
 
@@ -311,10 +308,14 @@ class DailyReportAnalysisAPI(Star):
         last_time = to_summarize[-1].get("时间", "未知时间")
         dialogue_text = "\n".join([m["content"] for m in to_summarize])
 
+        # 增加日志：打印组装好的对话文本，方便调试 ID 和 角色问题
+        logger.debug(
+            f"DailyReportAnalysisAPI: 喂给 LLM 的对话文本详情:\n---\n{dialogue_text}\n---"
+        )
+
         provider_id = self.config.get("summary_provider_id")
         if provider_id:
             try:
-                # 获取插件指定人格或全局默认人格
                 persona_id = self.config.get("plugin_specific_persona_id")
                 system_prompt = None
                 if persona_id:
@@ -330,21 +331,22 @@ class DailyReportAnalysisAPI(Star):
                     )
                     system_prompt = default_persona.get("prompt")
 
-                # 增加调试日志
-                logger.debug(
-                    f"DailyReportAnalysisAPI: 请求总结。使用人格 ID: {persona_id or '默认'}, 系统提示词长度: {len(system_prompt) if system_prompt else 0}"
-                )
-
-                # 强化 Prompt 指令
+                # 强化 Prompt 指令：增加角色定义的强限制
                 prompt = (
                     f"对话背景：你在本群的昵称是【{bot_nickname}】，特定用户的昵称是【{user_nickname}】。\n"
+                    f"角色说明（重要）：\n"
+                    f"- 消息中带有【你】前缀的是你自己（{bot_nickname}）的发言；\n"
+                    f"- 带有【用户】前缀的是特定用户（{user_nickname}）的发言；\n"
+                    f"- 带有【群友】前缀的是其他群成员的发言，他们不是你，也不是特定用户。\n\n"
                     f"任务目标：精炼地总结以下这段群聊记录（50字以内）。\n"
-                    f"特别要求：请务必以你的人设口吻进行总结，并重点体现出特定用户【{user_nickname}】在对话中参与了哪些讨论或表达了什么核心观点。\n"
+                    f"特别要求：请务必以你的人设口吻进行总结，并重点体现出特定用户【{user_nickname}】参与了哪些互动或发表了什么观点。\n"
                     f"输出格式要求（务必严格遵守）：\n"
                     f"话题：<这里填写一句话话题>\n"
                     f"内容：<这里填写总结内容>\n"
-                    f"规则：1. 不要使用Markdown格式符号（如 ** 或 #）；2. 不要添加多余解释；3. 不要改变此输出结构或增加字段。\n\n"
-                    f"{dialogue_text}"
+                    f"规则：1. 不要使用Markdown格式符号；2. 不要添加多余解释；3. 不要改变结构。\n\n"
+                    f"--- 对话记录开始 ---\n"
+                    f"{dialogue_text}\n"
+                    f"--- 对话记录结束 ---"
                 )
 
                 response = await self.context.llm_generate(
@@ -376,7 +378,6 @@ class DailyReportAnalysisAPI(Star):
         }
         await self.send_to_api(data)
 
-        # 4. 快照 ID 推进
         self.last_summarized_id[group_id] = pending[last_user_msg_index]["id"]
         self.active_groups.discard(group_id)
 
@@ -406,14 +407,11 @@ class DailyReportAnalysisAPI(Star):
                 if event.message_obj.group
                 else "未知群聊"
             )
-
-            # 统一获取机器人名片
             bot_name = await self._get_bot_nickname(event, group_id)
 
             self.message_id_counter[group_id] += 1
             msg_id = self.message_id_counter[group_id]
 
-            # 使用第一人称语义的前缀，增强 LLM 代入感
             msg_content_formatted = f"【你】{bot_name}: {reply_text}"
             msg_obj = {
                 "id": msg_id,
