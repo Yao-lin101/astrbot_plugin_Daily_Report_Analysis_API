@@ -120,7 +120,20 @@ class DailyReportAnalysisAPI(Star):
 
         image_path = await ReportHandler.render_report(report_data)
         if image_path:
-            yield event.chain_result([Image.fromFileSystem(image_path)])
+            import base64
+            from pathlib import Path
+            try:
+                # 读取图片并转为 base64
+                p = Path(image_path)
+                if p.exists():
+                    img_bytes = p.read_bytes()
+                    base64_str = base64.b64encode(img_bytes).decode('utf-8')
+                    yield event.chain_result([Image(base64=base64_str)])
+                else:
+                    yield event.plain_result(f"错误：渲染出的图片文件不存在。")
+            except Exception as e:
+                logger.error(f"发送 Base64 图片失败: {e}")
+                yield event.plain_result(f"发送图片失败: {e}")
         else:
             yield event.plain_result("图片生成失败，请检查日志。")
 
