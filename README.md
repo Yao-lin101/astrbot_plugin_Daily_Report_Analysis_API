@@ -1,14 +1,42 @@
-# astrbot-plugin-helloworld
+# Daily Report Analysis API (日报分析 & 话题总结)
 
-AstrBot 插件模板 / A template plugin for AstrBot plugin feature
+一个专为 AstrBot 设计的高级群聊总结与日报分析插件，支持深度人设代入、增量进度管理以及特定用户行为追踪。
 
-> [!NOTE]
-> This repo is just a template of [AstrBot](https://github.com/AstrBotDevs/AstrBot) Plugin.
-> 
-> [AstrBot](https://github.com/AstrBotDevs/AstrBot) is an agentic assistant for both personal and group conversations. It can be deployed across dozens of mainstream instant messaging platforms, including QQ, Telegram, Feishu, DingTalk, Slack, LINE, Discord, Matrix, etc. In addition, it provides a reliable and extensible conversational AI infrastructure for individuals, developers, and teams. Whether you need a personal AI companion, an intelligent customer support agent, an automation assistant, or an enterprise knowledge base, AstrBot enables you to quickly build AI applications directly within your existing messaging workflows.
+## ✨ 功能特性
 
-# Supports
+- **🚀 增量话题总结**：自动记录群聊历史，采用“快照点”机制确保每次总结仅处理未分析的新消息，防止内容重复。
+- **🎭 深度人设代入**：支持指定系统内已定义的人格，总结内容会自动以该人设的口吻进行叙述。
+- **🔍 特定用户追踪**：重点关注并分析特定用户的发言，在报告中突出其核心观点与互动细节。
+- **🛡️ 智能指令过滤**：自动识别并屏蔽本插件及系统指令，确保总结上下文中不包含干扰性的指令操作。
+- **🔗 身份自动解析**：自动将消息中的 `At` 组件解析为对应的群昵称，确保 LLM 能够清晰识别对话双方的身份。
+- **📡 外部 API 联动**：将分析结果实时发送至指定的后台接口（如 StillAlive 服务），支持 X-Character-Key 安全验证。
+- **🗂️ 私聊同步记录**：实时记录并汇总与特定用户的私聊对话。
 
-- [AstrBot Repo](https://github.com/AstrBotDevs/AstrBot)
-- [AstrBot Plugin Development Docs (Chinese)](https://docs.astrbot.app/dev/star/plugin-new.html)
-- [AstrBot Plugin Development Docs (English)](https://docs.astrbot.app/en/dev/star/plugin-new.html)
+## ⚙️ 配置说明
+
+在 AstrBot 管理面板中配置以下参数：
+
+| 配置项 | 说明 |
+| :--- | :--- |
+| `target_url` | 接收分析结果的 API 地址 |
+| `character_key` | 用于 API 验证的 Key (X-Character-Key) |
+| `specific_user_id` | 需要重点监控和分析的特定用户 ID |
+| `summary_provider_id` | 执行总结任务的 LLM 提供商 ID |
+| `plugin_specific_persona_id` | (可选) 指定总结时使用的机器人人格 ID |
+
+## 🛠️ 指令列表
+
+| 指令 | 权限 | 功能说明 |
+| :--- | :--- | :--- |
+| `/stillalive群总结` | 特定用户 | 手动触发当前群聊的增量总结并发送报告 |
+| `/stillalive清理缓存` | 特定用户 | 重置当前群聊的总结进度快照（从头开始记录） |
+
+## 📦 安装方法
+
+1. 在 AstrBot 插件市场搜索 `Daily_Report_Analysis_API` 并安装。
+2. 或手动将仓库克隆至 `data/plugins/` 目录。
+3. 重启 AstrBot 后在配置页面填写相关参数。
+
+## 📄 开源协议
+
+MIT License
