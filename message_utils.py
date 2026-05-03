@@ -1,3 +1,5 @@
+import re
+
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import At, Face, Image, Plain, Reply, Video
 
@@ -78,9 +80,19 @@ async def format_full_message(
                 for m in reversed(group_messages):
                     if str(m.get("platform_msg_id")) == str(target_id):
                         content = m.get("content", "")
-                        # 尝试剥离名字前缀 "【角色】名字: 内容"
+                        # 尝试从格式化的内容中提取 发言人 和 实际内容
+                        # content 格式通常为 "【群友/用户/你】名字: 内容"
                         if ": " in content:
-                            found_text = content.split(": ", 1)[1]
+                            prefix, actual_content = content.split(": ", 1)
+                            # 提取名字，去除前缀标识
+                            target_name = (
+                                prefix.split("】", 1)[-1] if "】" in prefix else prefix
+                            )
+                            # 清洗内容：去除被引用消息中可能存在的嵌套回复占位符，防止递归冗余
+                            clean_content = re.sub(
+                                r"（回复: \".*?\"）\s*", "", actual_content
+                            )
+                            found_text = f"{target_name}: {clean_content}"
                         else:
                             found_text = content
                         break
