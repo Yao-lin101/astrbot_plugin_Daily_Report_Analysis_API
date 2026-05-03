@@ -5,7 +5,7 @@ from datetime import datetime
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.message_components import Image, Node, Nodes, Plain
+from astrbot.api.message_components import At, Image, Node, Nodes, Plain
 from astrbot.api.star import Context, Star, register
 
 from .api_service import APIService
@@ -141,15 +141,19 @@ class DailyReportAnalysisAPI(Star):
         if error_msg:
             # 针对性提示：日报不存在
             if "日报不存在" in error_msg or "No DailyReport matches" in error_msg:
-                yield event.plain_result(self._get_resp("resp_daily_not_found", date=date))
+                yield event.plain_result(
+                    self._get_resp("resp_daily_not_found", date=date)
+                )
             else:
-                yield event.plain_result(self._get_resp("resp_daily_unknown_error", error=error_msg))
+                yield event.plain_result(
+                    self._get_resp("resp_daily_unknown_error", error=error_msg)
+                )
             return
 
         image_path = await ReportHandler.render_report(report_data)
         if image_path:
-            import base64
             from pathlib import Path
+
             try:
                 # 读取图片
                 p = Path(image_path)
@@ -159,55 +163,79 @@ class DailyReportAnalysisAPI(Star):
                         chain = event.chain_result([Image.fromFileSystem(str(p))])
                         await event.send(chain)
                     except Exception as e:
-                        logger.error(f"DailyReport: 图片发送失败，尝试发送转发文本: {e}")
-                        
+                        logger.error(
+                            f"DailyReport: 图片发送失败，尝试发送转发文本: {e}"
+                        )
+
                         # 第二层保护：尝试以合并转发形式发送文本总结
                         # 明确优先级：markdown -> report_md -> report_markdown
-                        report_text = report_data.get("markdown") or \
-                                      report_data.get("report_md") or \
-                                      report_data.get("report_markdown")
-                        
+                        report_text = (
+                            report_data.get("markdown")
+                            or report_data.get("report_md")
+                            or report_data.get("report_markdown")
+                        )
+
                         # 如果都没有，尝试从 report_html 中剥离标签作为保底文本
                         if not report_text and "report_html" in report_data:
                             import re
+
                             html = report_data["report_html"]
                             # 先将块级标签和换行标签替换为真正的换行符
-                            html = re.sub(r'<(br|p|div|li|h[1-6])[^>]*>', '\n', html)
-                            html = re.sub(r'</(p|div|li|h[1-6])>', '\n', html)
-                            report_text = re.sub(r'<[^>]+>', '', html)
+                            html = re.sub(r"<(br|p|div|li|h[1-6])[^>]*>", "\n", html)
+                            html = re.sub(r"</(p|div|li|h[1-6])>", "\n", html)
+                            report_text = re.sub(r"<[^>]+>", "", html)
                             report_text = report_text.replace("&nbsp;", " ").strip()
                             # 压缩过多的连续换行
-                            report_text = re.sub(r'\n\s*\n', '\n\n', report_text)
+                            report_text = re.sub(r"\n\s*\n", "\n\n", report_text)
 
                         if report_text:
                             # 确定机器人账号 (容错处理)
-                            bot_id = str(getattr(event, "robot_id", getattr(event, "self_id", "0")))
+                            bot_id = str(
+                                getattr(
+                                    event, "robot_id", getattr(event, "self_id", "0")
+                                )
+                            )
                             try:
-                                logger.info(f"DailyReport: 正在尝试发送合并转发消息 (内容长度: {len(report_text)})")
+                                logger.info(
+                                    f"DailyReport: 正在尝试发送合并转发消息 (内容长度: {len(report_text)})"
+                                )
                                 # 构造转发节点
                                 node = Node(content=[Plain(report_text)])
-                                node.name = "甜筒爱丽丝" 
+                                node.name = "甜筒爱丽丝"
                                 node.uin = bot_id
                                 nodes = Nodes(nodes=[node])
                                 await event.send(event.chain_result([nodes]))
                                 logger.info("DailyReport: 合并转发报告发送成功")
-                                return 
+                                return
                             except Exception as e_node:
-                                logger.error(f"DailyReport: 合并转发发送失败 ({e_node})，尝试直接发送纯文本报告")
+                                logger.error(
+                                    f"DailyReport: 合并转发发送失败 ({e_node})，尝试直接发送纯文本报告"
+                                )
                                 try:
                                     # 如果转发失败，尝试直接发纯文本（虽然会很长）
                                     await event.send(event.plain_result(report_text))
                                     return
                                 except Exception as e_plain:
-                                    logger.error(f"DailyReport: 纯文本回退发送也失败了: {e_plain}")
-                        
+                                    logger.error(
+                                        f"DailyReport: 纯文本回退发送也失败了: {e_plain}"
+                                    )
+
                         # 第三层保护：最后的报错提示
-                        yield event.plain_result(self._get_resp("resp_image_transmit_error", error="图片发送失败，且文本回退发送均未成功。"))
+                        yield event.plain_result(
+                            self._get_resp(
+                                "resp_image_transmit_error",
+                                error="图片发送失败，且文本回退发送均未成功。",
+                            )
+                        )
                 else:
-                    yield event.plain_result(self._get_resp("resp_image_file_not_found"))
+                    yield event.plain_result(
+                        self._get_resp("resp_image_file_not_found")
+                    )
             except Exception as e:
                 logger.error(f"处理图片发送失败: {e}")
-                yield event.plain_result(self._get_resp("resp_image_transmit_error", error=str(e)))
+                yield event.plain_result(
+                    self._get_resp("resp_image_transmit_error", error=str(e))
+                )
         else:
             yield event.plain_result(self._get_resp("resp_render_error"))
 
@@ -247,7 +275,9 @@ class DailyReportAnalysisAPI(Star):
             yield event.plain_result(self._get_resp("resp_summary_success"))
         except Exception as e:
             logger.error(f"DailyReportAnalysisAPI: 手动总结失败: {e}")
-            yield event.plain_result(self._get_resp("resp_image_transmit_error", error=str(e)))
+            yield event.plain_result(
+                self._get_resp("resp_image_transmit_error", error=str(e))
+            )
 
     @filter.command("stillalive清理缓存")
     async def clear_cache(self, event: AstrMessageEvent):
@@ -268,7 +298,9 @@ class DailyReportAnalysisAPI(Star):
             self.group_timers[group_id].cancel()
             self.group_timers.pop(group_id, None)
 
-        yield event.plain_result(self._get_resp("resp_summary_success")) # 这里借用成功的提示
+        yield event.plain_result(
+            self._get_resp("resp_summary_success")
+        )  # 这里借用成功的提示
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):
@@ -326,13 +358,21 @@ class DailyReportAnalysisAPI(Star):
             )
 
             if is_specific_user:
-                self.active_groups.add(group_id)
-                if group_id in self.group_timers:
-                    self.group_timers[group_id].cancel()
-
-                self.group_timers[group_id] = asyncio.create_task(
-                    self._delay_summarize_task(group_id, 600)
+                # 检查是否为实质性发言（包含非空白文字或 At）
+                has_substance = any(
+                    (isinstance(comp, Plain) and comp.text.strip())
+                    or isinstance(comp, At)
+                    for comp in event.message_obj.message
                 )
+
+                if has_substance:
+                    self.active_groups.add(group_id)
+                    if group_id in self.group_timers:
+                        self.group_timers[group_id].cancel()
+
+                    self.group_timers[group_id] = asyncio.create_task(
+                        self._delay_summarize_task(group_id, 600)
+                    )
         else:
             # 私聊记录逻辑
             if sender_id == specific_user_id:
@@ -383,7 +423,9 @@ class DailyReportAnalysisAPI(Star):
             self.context, event, group_id, self.bot_nicknames
         )
 
-        group_name = to_summarize[0].get("群名称") or self.group_names.get(group_id, "未知群聊")
+        group_name = to_summarize[0].get("群名称") or self.group_names.get(
+            group_id, "未知群聊"
+        )
         last_time = to_summarize[-1].get("时间", "未知时间")
         dialogue_text = "\n".join([m["content"] for m in to_summarize])
 

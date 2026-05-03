@@ -1,5 +1,5 @@
 from astrbot.api.event import AstrMessageEvent
-from astrbot.api.message_components import At, Plain
+from astrbot.api.message_components import At, Face, Image, Plain, Video
 
 
 async def get_bot_nickname(
@@ -49,7 +49,7 @@ async def resolve_nickname(event: AstrMessageEvent, user_id: str, group_id: str)
 
 
 async def format_full_message(event: AstrMessageEvent) -> str:
-    """解析消息组件，保留并转化 At 信息为文本格式"""
+    """解析消息组件，保留并转化 At 信息为文本格式，同时保留图片等媒体占位符"""
     full_content = ""
     group_id = event.message_obj.group_id
 
@@ -61,5 +61,15 @@ async def format_full_message(event: AstrMessageEvent) -> str:
             if target_id:
                 nickname = await resolve_nickname(event, target_id, group_id)
                 full_content += f"@{nickname} "
+        elif isinstance(comp, Image):
+            full_content += " [图片] "
+        elif isinstance(comp, Face):
+            full_content += " [表情] "
+        elif isinstance(comp, Video):
+            full_content += " [视频] "
+        elif type(comp).__name__ in ["Record", "Audio"]:
+            full_content += " [语音] "
+        elif type(comp).__name__ == "File":
+            full_content += " [文件] "
 
     return full_content.strip() or event.message_str

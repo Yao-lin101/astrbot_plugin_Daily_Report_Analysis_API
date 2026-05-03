@@ -1,12 +1,15 @@
-import mistune
-from astrbot.api import logger
-from astrbot.core.utils.io import save_temp_img
-from PIL import Image
 import io
 import os
 
+import mistune
+from PIL import Image
+
+from astrbot.api import logger
+from astrbot.core.utils.io import save_temp_img
+
 try:
     from playwright.async_api import async_playwright
+
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -179,7 +182,7 @@ class ReportHandler:
             plugins=["table", "strikethrough", "task_lists"]
         )
         report_html = renderer(markdown_content)
-        
+
         # 准备完整的 HTML 内容
         tmpl_data = {"date": date, "is_hidden": is_hidden, "report_html": report_html}
 
@@ -188,16 +191,22 @@ class ReportHandler:
 
         if use_local_debug and PLAYWRIGHT_AVAILABLE:
             try:
-                logger.info("ReportHandler: 检测到调试模式，正在使用本地 Playwright 渲染预览...")
-                final_html = HTML_TEMPLATE.replace("{{ date }}", date) \
-                                           .replace("{{ report_html | safe }}", report_html) \
-                                           .replace("{% if is_hidden %}", "" if is_hidden else "<!--") \
-                                           .replace("{% endif %}", "" if is_hidden else "-->")
-                
+                logger.info(
+                    "ReportHandler: 检测到调试模式，正在使用本地 Playwright 渲染预览..."
+                )
+                final_html = (
+                    HTML_TEMPLATE.replace("{{ date }}", date)
+                    .replace("{{ report_html | safe }}", report_html)
+                    .replace("{% if is_hidden %}", "" if is_hidden else "<!--")
+                    .replace("{% endif %}", "" if is_hidden else "-->")
+                )
+
                 async with async_playwright() as p:
                     browser = await p.chromium.launch()
                     # 模拟服务器环境：将宽度设为 1280px (标准宽视口)，倍率设为 1
-                    context = await browser.new_context(viewport={'width': 1280, 'height': 800}, device_scale_factor=1)
+                    context = await browser.new_context(
+                        viewport={"width": 1280, "height": 800}, device_scale_factor=1
+                    )
                     page = await context.new_page()
                     await page.set_content(final_html)
                     await page.wait_for_load_state("networkidle")
@@ -211,10 +220,10 @@ class ReportHandler:
         # 默认生产逻辑：使用远程 API
         try:
             from astrbot.api import html_renderer
+
             # 使用官方接口进行渲染
             image_path = await html_renderer.render_custom_template(
-                HTML_TEMPLATE, 
-                tmpl_data
+                HTML_TEMPLATE, tmpl_data
             )
             return image_path
         except Exception as e:
