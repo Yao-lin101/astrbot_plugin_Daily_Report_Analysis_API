@@ -1,12 +1,15 @@
 import asyncio
 import inspect
-from collections import defaultdict
+import json
+import os
+from collections import defaultdict, deque
 from datetime import datetime
+from pathlib import Path
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.message_components import At, Image, Node, Nodes, Plain, Reply
-from astrbot.api.star import Context, Star, register
+from astrbot.api.star import Context, Star, StarTools, register
 
 from .api_service import APIService
 from .message_utils import format_full_message, get_bot_nickname
@@ -22,8 +25,8 @@ from .report_handler import ReportHandler
 class DailyReportAnalysisAPI(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
-        # 消息缓存: {group_id: [msg_obj, ...]}，每个群保留最近 500 条
-        self.group_messages_map = defaultdict(list)
+        # 消息缓存: {group_id: deque([msg_obj, ...])}，每个群保留最近 500 条
+        self.group_messages_map = defaultdict(lambda: deque(maxlen=500))
         # 进度记录: {group_id: last_summarized_id}
         self.last_summarized_id = defaultdict(int)
         # 消息 ID 计数器: {group_id: counter}
@@ -41,6 +44,49 @@ class DailyReportAnalysisAPI(Star):
         self.internal_commands = []
         self.api_service = None
 
+    def _get_data_path(self):
+        return Path(StarTools.get_data_dir(self)) / "data.json"
+
+    def _load_data(self):
+        path = self._get_data_path()
+        if path.exists():
+            try:
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.last_summarized_id = defaultdict(
+                        int, data.get("last_summarized_id", {})
+                    )
+                    self.message_id_counter = defaultdict(
+                        int, data.get("message_id_counter", {})
+                    )
+                    self.user_nicknames.update(data.get("user_nicknames", {}))
+                    self.bot_nicknames.update(data.get("bot_nicknames", {}))
+                    self.group_names.update(data.get("group_names", {}))
+                    # 恢复 messages
+                    saved_messages = data.get("group_messages_map", {})
+                    for gid, msgs in saved_messages.items():
+                        self.group_messages_map[gid] = deque(msgs, maxlen=500)
+                logger.info(f"DailyReportAnalysisAPI: 已从 {path} 加载持久化数据。")
+            except Exception as e:
+                logger.error(f"DailyReportAnalysisAPI: 加载数据失败: {e}")
+
+    def _save_data(self):
+        path = self._get_data_path()
+        os.makedirs(path.parent, exist_ok=True)
+        data = {
+            "last_summarized_id": dict(self.last_summarized_id),
+            "message_id_counter": dict(self.message_id_counter),
+            "user_nicknames": self.user_nicknames,
+            "bot_nicknames": self.bot_nicknames,
+            "group_names": self.group_names,
+            "group_messages_map": {
+                k: list(v) for k, v in self.group_messages_map.items()
+            },
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        logger.debug("DailyReportAnalysisAPI: 持久化数据已保存。")
+
     def _get_resp(self, key: str, default: str = "", **kwargs) -> str:
         """从配置获取回复模板并格式化"""
         tmpl = self.config.get(key, default)
@@ -53,6 +99,8 @@ class DailyReportAnalysisAPI(Star):
         """插件初始化"""
         if not self.config:
             self.config = self.context.get_config()
+
+        self._load_data()
 
         # 初始化 API 服务
         target_url = self.config.get("target_url", "")
@@ -89,6 +137,7 @@ class DailyReportAnalysisAPI(Star):
         for timer in self.group_timers.values():
             timer.cancel()
         self.group_timers.clear()
+        self._save_data()
 
     def _check_permission(self, event: AstrMessageEvent) -> bool:
         """检查发送者是否为特定用户"""
@@ -351,10 +400,8 @@ class DailyReportAnalysisAPI(Star):
             }
             self.group_messages_map[group_id].append(msg_obj)
 
-            if len(self.group_messages_map[group_id]) > 500:
-                self.group_messages_map[group_id] = self.group_messages_map[group_id][
-                    -500:
-                ]
+            if msg_id % 20 == 0:
+                self._save_data()
 
             logger.debug(
                 f"DailyReportAnalysisAPI: 记录群聊消息 ID={msg_id} [{group_name}] - {msg_content_formatted}"
@@ -511,6 +558,7 @@ class DailyReportAnalysisAPI(Star):
 
         self.last_summarized_id[group_id] = pending[last_user_msg_index]["id"]
         self.active_groups.discard(group_id)
+        self._save_data()
 
     @filter.after_message_sent()
     async def after_message_sent(self, event: AstrMessageEvent) -> None:
