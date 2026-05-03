@@ -5,7 +5,7 @@ from datetime import datetime
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.message_components import Image
+from astrbot.api.message_components import Image, Node, Nodes, Plain
 from astrbot.api.star import Context, Star, register
 
 from .api_service import APIService
@@ -134,16 +134,33 @@ class DailyReportAnalysisAPI(Star):
             import base64
             from pathlib import Path
             try:
-                # 读取图片并转为 base64
+                # 读取图片
                 p = Path(image_path)
                 if p.exists():
                     try:
-                        # 使用 await 直接发送消息链，以便捕获发送过程中的异常
+                        # 第一层保护：尝试发送图片
                         chain = event.chain_result([Image.fromFileSystem(str(p))])
                         await event.send(chain)
                     except Exception as e:
-                        logger.error(f"DailyReport: 发送图片报告失败: {e}")
-                        yield event.plain_result(self._get_resp("resp_image_transmit_error", error="富媒体上传失败，可能图片过大或网络异常。"))
+                        logger.error(f"DailyReport: 图片发送失败，尝试发送转发文本: {e}")
+                        
+                        # 第二层保护：尝试以合并转发形式发送 Markdown 文本
+                        report_md = report_data.get("report_md")
+                        if report_md:
+                            try:
+                                # 构造转发节点
+                                node = Node(content=[Plain(report_md)])
+                                node.name = "甜筒爱丽丝" # 节点显示的昵称
+                                node.uin = event.robot_id # 节点显示的账号
+                                nodes = Nodes(nodes=[node])
+                                await event.send(event.chain_result([nodes]))
+                                logger.info("DailyReport: 转发文本报告发送成功")
+                                return 
+                            except Exception as e_node:
+                                logger.error(f"DailyReport: 转发文本报告发送也失败了: {e_node}")
+                        
+                        # 第三层保护：最后的报错提示
+                        yield event.plain_result(self._get_resp("resp_image_transmit_error", error="图片发送失败，且文本转发尝试也未成功。"))
                 else:
                     yield event.plain_result(self._get_resp("resp_image_file_not_found"))
             except Exception as e:
