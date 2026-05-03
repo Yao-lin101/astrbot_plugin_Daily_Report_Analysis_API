@@ -144,23 +144,48 @@ class DailyReportAnalysisAPI(Star):
                     except Exception as e:
                         logger.error(f"DailyReport: 图片发送失败，尝试发送转发文本: {e}")
                         
-                        # 第二层保护：尝试以合并转发形式发送 Markdown 文本
-                        report_md = report_data.get("report_md")
-                        if report_md:
+                        # 第二层保护：尝试以合并转发形式发送文本总结
+                        # 明确优先级：markdown -> report_md -> report_markdown
+                        report_text = report_data.get("markdown") or \
+                                      report_data.get("report_md") or \
+                                      report_data.get("report_markdown")
+                        
+                        # 如果都没有，尝试从 report_html 中剥离标签作为保底文本
+                        if not report_text and "report_html" in report_data:
+                            import re
+                            html = report_data["report_html"]
+                            # 先将块级标签和换行标签替换为真正的换行符
+                            html = re.sub(r'<(br|p|div|li|h[1-6])[^>]*>', '\n', html)
+                            html = re.sub(r'</(p|div|li|h[1-6])>', '\n', html)
+                            report_text = re.sub(r'<[^>]+>', '', html)
+                            report_text = report_text.replace("&nbsp;", " ").strip()
+                            # 压缩过多的连续换行
+                            report_text = re.sub(r'\n\s*\n', '\n\n', report_text)
+
+                        if report_text:
+                            # 确定机器人账号 (容错处理)
+                            bot_id = str(getattr(event, "robot_id", getattr(event, "self_id", "0")))
                             try:
+                                logger.info(f"DailyReport: 正在尝试发送合并转发消息 (内容长度: {len(report_text)})")
                                 # 构造转发节点
-                                node = Node(content=[Plain(report_md)])
-                                node.name = "甜筒爱丽丝" # 节点显示的昵称
-                                node.uin = event.robot_id # 节点显示的账号
+                                node = Node(content=[Plain(report_text)])
+                                node.name = "甜筒爱丽丝" 
+                                node.uin = bot_id
                                 nodes = Nodes(nodes=[node])
                                 await event.send(event.chain_result([nodes]))
-                                logger.info("DailyReport: 转发文本报告发送成功")
+                                logger.info("DailyReport: 合并转发报告发送成功")
                                 return 
                             except Exception as e_node:
-                                logger.error(f"DailyReport: 转发文本报告发送也失败了: {e_node}")
+                                logger.error(f"DailyReport: 合并转发发送失败 ({e_node})，尝试直接发送纯文本报告")
+                                try:
+                                    # 如果转发失败，尝试直接发纯文本（虽然会很长）
+                                    await event.send(event.plain_result(report_text))
+                                    return
+                                except Exception as e_plain:
+                                    logger.error(f"DailyReport: 纯文本回退发送也失败了: {e_plain}")
                         
                         # 第三层保护：最后的报错提示
-                        yield event.plain_result(self._get_resp("resp_image_transmit_error", error="图片发送失败，且文本转发尝试也未成功。"))
+                        yield event.plain_result(self._get_resp("resp_image_transmit_error", error="图片发送失败，且文本回退发送均未成功。"))
                 else:
                     yield event.plain_result(self._get_resp("resp_image_file_not_found"))
             except Exception as e:
