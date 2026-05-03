@@ -4,7 +4,6 @@ import json
 import os
 from collections import defaultdict, deque
 from datetime import datetime
-from pathlib import Path
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -45,7 +44,7 @@ class DailyReportAnalysisAPI(Star):
         self.api_service = None
 
     def _get_data_path(self):
-        return Path(StarTools.get_data_dir(self)) / "data.json"
+        return StarTools.get_data_dir() / "data.json"
 
     def _load_data(self):
         path = self._get_data_path()
