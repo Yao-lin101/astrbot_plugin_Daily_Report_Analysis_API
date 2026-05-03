@@ -1,5 +1,5 @@
 from astrbot.api.event import AstrMessageEvent
-from astrbot.api.message_components import At, Face, Image, Plain, Video
+from astrbot.api.message_components import At, Face, Image, Plain, Reply, Video
 
 
 async def get_bot_nickname(
@@ -48,8 +48,10 @@ async def resolve_nickname(event: AstrMessageEvent, user_id: str, group_id: str)
     return user_id
 
 
-async def format_full_message(event: AstrMessageEvent) -> str:
-    """解析消息组件，保留并转化 At 信息为文本格式，同时保留图片等媒体占位符"""
+async def format_full_message(
+    event: AstrMessageEvent, group_messages: list = None
+) -> str:
+    """解析消息组件，保留并转化 At 信息为文本格式，同时保留图片等媒体占位符，支持引用回复解析"""
     full_content = ""
     group_id = event.message_obj.group_id
 
@@ -67,6 +69,25 @@ async def format_full_message(event: AstrMessageEvent) -> str:
             full_content += " [表情] "
         elif isinstance(comp, Video):
             full_content += " [视频] "
+        elif isinstance(comp, Reply):
+            # 引用回复处理
+            target_id = getattr(comp, "message_id", getattr(comp, "id", None))
+            found_text = None
+            if target_id and group_messages:
+                # 尝试从历史记录中寻找被引用的内容
+                for m in reversed(group_messages):
+                    if str(m.get("platform_msg_id")) == str(target_id):
+                        content = m.get("content", "")
+                        # 尝试剥离名字前缀 "【角色】名字: 内容"
+                        if ": " in content:
+                            found_text = content.split(": ", 1)[1]
+                        else:
+                            found_text = content
+                        break
+            if found_text:
+                full_content += f'（回复: "{found_text}"） '
+            else:
+                full_content += "（回复了某条消息） "
         elif type(comp).__name__ in ["Record", "Audio"]:
             full_content += " [语音] "
         elif type(comp).__name__ == "File":

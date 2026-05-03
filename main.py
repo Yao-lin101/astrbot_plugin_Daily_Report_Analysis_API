@@ -5,7 +5,7 @@ from datetime import datetime
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.message_components import At, Image, Node, Nodes, Plain
+from astrbot.api.message_components import At, Image, Node, Nodes, Plain, Reply
 from astrbot.api.star import Context, Star, register
 
 from .api_service import APIService
@@ -324,8 +324,10 @@ class DailyReportAnalysisAPI(Star):
             group_name = self._get_group_name(event)
             self.group_events[group_id] = event
 
-            # 使用增强版解析逻辑保留 At 信息
-            message_content = await format_full_message(event)
+            # 使用增强版解析逻辑保留 At 信息和回复信息
+            message_content = await format_full_message(
+                event, self.group_messages_map.get(group_id)
+            )
 
             is_specific_user = sender_id == specific_user_id
             if is_specific_user:
@@ -340,6 +342,7 @@ class DailyReportAnalysisAPI(Star):
             msg_content_formatted = f"{prefix}{sender_name}: {message_content}"
             msg_obj = {
                 "id": msg_id,
+                "platform_msg_id": event.message_obj.message_id,
                 "时间": time_str,
                 "群名称": group_name,
                 "content": msg_content_formatted,
@@ -362,6 +365,7 @@ class DailyReportAnalysisAPI(Star):
                 has_substance = any(
                     (isinstance(comp, Plain) and comp.text.strip())
                     or isinstance(comp, At)
+                    or isinstance(comp, Reply)
                     for comp in event.message_obj.message
                 )
 
@@ -405,17 +409,26 @@ class DailyReportAnalysisAPI(Star):
 
         specific_user_id = str(self.config.get("specific_user_id", ""))
 
+        # 寻找特定用户在本次待处理消息中的活动范围
+        first_user_msg_index = -1
         last_user_msg_index = -1
-        for i in range(len(pending) - 1, -1, -1):
+        for i in range(len(pending)):
             if pending[i].get("sender_id") == specific_user_id:
+                if first_user_msg_index == -1:
+                    first_user_msg_index = i
                 last_user_msg_index = i
-                break
 
         if last_user_msg_index == -1:
             self.active_groups.discard(group_id)
             return
 
-        to_summarize = pending
+        # 优化：向前追溯背景，避免无关消息干扰（保留用户首条发言前 15 条消息）
+        context_start = max(0, first_user_msg_index - 15)
+        to_summarize = pending[context_start:]
+
+        # 限制最大长度，防止消息过多导致 LLM 偏离重点（保留最近的 100 条）
+        if len(to_summarize) > 100:
+            to_summarize = to_summarize[-100:]
 
         user_nickname = self.user_nicknames.get(group_id, "用户")
         event = self.group_events.get(group_id)
@@ -529,6 +542,7 @@ class DailyReportAnalysisAPI(Star):
             msg_content_formatted = f"【你】{bot_name}: {reply_text}"
             msg_obj = {
                 "id": msg_id,
+                "platform_msg_id": event.message_obj.message_id,
                 "时间": time_str,
                 "群名称": group_name,
                 "content": msg_content_formatted,
