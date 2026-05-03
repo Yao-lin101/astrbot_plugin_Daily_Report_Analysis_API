@@ -31,6 +31,7 @@ class DailyReportAnalysisAPI(Star):
 
         self.user_nicknames = {}
         self.bot_nicknames = {}
+        self.group_names = {}
         self.group_events = {}
         self.group_timers = {}
         self.active_groups = set()
@@ -94,6 +95,22 @@ class DailyReportAnalysisAPI(Star):
         sender_id = str(event.get_sender_id())
         specific_user_id = str(self.config.get("specific_user_id", ""))
         return sender_id == specific_user_id
+
+    def _get_group_name(self, event: AstrMessageEvent) -> str:
+        """获取群名称，优先从事件获取，其次从缓存，最后保底"""
+        group_id = event.message_obj.group_id
+        if not group_id:
+            return "未知群聊"
+
+        group_name = None
+        if event.message_obj.group and event.message_obj.group.group_name:
+            group_name = event.message_obj.group.group_name
+            self.group_names[group_id] = group_name
+
+        if not group_name:
+            group_name = self.group_names.get(group_id, "未知群聊")
+
+        return group_name
 
     @filter.command("stillalive日报")
     async def get_stillalive_report(self, event: AstrMessageEvent, date: str = None):
@@ -272,11 +289,7 @@ class DailyReportAnalysisAPI(Star):
         # 处理群聊消息
         if event.message_obj.group_id:
             group_id = event.message_obj.group_id
-            group_name = (
-                event.message_obj.group.group_name
-                if event.message_obj.group
-                else "未知群聊"
-            )
+            group_name = self._get_group_name(event)
             self.group_events[group_id] = event
 
             # 使用增强版解析逻辑保留 At 信息
@@ -370,7 +383,7 @@ class DailyReportAnalysisAPI(Star):
             self.context, event, group_id, self.bot_nicknames
         )
 
-        group_name = to_summarize[0].get("群名称", "未知群聊")
+        group_name = to_summarize[0].get("群名称") or self.group_names.get(group_id, "未知群聊")
         last_time = to_summarize[-1].get("时间", "未知时间")
         dialogue_text = "\n".join([m["content"] for m in to_summarize])
 
@@ -463,11 +476,7 @@ class DailyReportAnalysisAPI(Star):
                 await self._send_private_immediately()
         else:
             group_id = event.message_obj.group_id
-            group_name = (
-                event.message_obj.group.group_name
-                if event.message_obj.group
-                else "未知群聊"
-            )
+            group_name = self._get_group_name(event)
             bot_name = await get_bot_nickname(
                 self.context, event, group_id, self.bot_nicknames
             )
