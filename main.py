@@ -39,6 +39,21 @@ SUMMARY_PROMPT_TEMPLATE = """对话背景：你在本群的昵称是【{bot_nick
 {dialogue_text}
 --- 对话记录结束 ---"""
 
+PRIVATE_SUMMARY_PROMPT_TEMPLATE = """任务目标：以下是你与特定用户的多轮私聊记录，请根据你的AI人设，判断这段对话的核心内容，并提炼成“话题”与“总结”，以便记录到你的日志中。
+特别要求：
+1. 提取这段多轮对话最核心的意图、探讨的问题或最终结论。
+2. 保持你的人设口吻进行描述。
+
+输出 JSON 格式要求（必须只返回合法的 JSON 对象，不带 Markdown 符号等包裹）：
+{{
+  "topic": "这里填写一句话话题名称",
+  "content": "这里填写这段私聊的总结内容（100字内）"
+}}
+
+--- 私聊记录开始 ---
+{dialogue_text}
+--- 私聊记录结束 ---"""
+
 
 @register(
     "astrbot_plugin_Daily_Report_Analysis_API",
@@ -63,6 +78,7 @@ class DailyReportAnalysisAPI(Star):
         self.group_timers = {}
         self.active_groups = set()
 
+        self.private_timer = None
         self.private_messages = []
         self.config = config
         self.internal_commands = []
@@ -86,6 +102,7 @@ class DailyReportAnalysisAPI(Star):
                     self.user_nicknames.update(data.get("user_nicknames", {}))
                     self.bot_nicknames.update(data.get("bot_nicknames", {}))
                     self.group_names.update(data.get("group_names", {}))
+                    self.private_messages = data.get("private_messages", [])
                     # 恢复 messages
                     saved_messages = data.get("group_messages_map", {})
                     for gid, msgs in saved_messages.items():
@@ -108,6 +125,7 @@ class DailyReportAnalysisAPI(Star):
             "user_nicknames": self.user_nicknames,
             "bot_nicknames": self.bot_nicknames,
             "group_names": self.group_names,
+            "private_messages": self.private_messages,
             "group_messages_map": {
                 k: list(v) for k, v in self.group_messages_map.items()
             },
@@ -130,6 +148,9 @@ class DailyReportAnalysisAPI(Star):
             self.config = self.context.get_config()
 
         self._load_data()
+
+        if self.private_messages:
+            self.private_timer = asyncio.create_task(self._delay_private_summary_task(10))
 
         # 初始化 API 服务
         target_url = self.config.get("target_url", "")
@@ -157,6 +178,7 @@ class DailyReportAnalysisAPI(Star):
                 "stillalive群总结",
                 "stillalive清理缓存",
                 "stillalive日报",
+                "stillalive私聊上报",
             ]
         else:
             self.internal_commands = list(set(self.internal_commands))
@@ -166,6 +188,8 @@ class DailyReportAnalysisAPI(Star):
         for timer in self.group_timers.values():
             timer.cancel()
         self.group_timers.clear()
+        if self.private_timer:
+            self.private_timer.cancel()
         self._save_data()
 
     def _check_permission(self, event: AstrMessageEvent) -> bool:
@@ -316,6 +340,30 @@ class DailyReportAnalysisAPI(Star):
                 )
         else:
             yield event.plain_result(self._get_resp("resp_render_error"))
+
+    @filter.command("stillalive私聊上报")
+    async def force_private_summary(self, event: AstrMessageEvent):
+        """手动强制触发私聊记录的总结与上报"""
+        if not self._check_permission(event):
+            yield event.plain_result(self._get_resp("resp_permission_denied"))
+            return
+
+        if not self.private_messages:
+            yield event.plain_result("当前没有待上报的私聊记录。")
+            return
+
+        yield event.plain_result("开始强制总结并上报私聊记录...")
+
+        try:
+            if self.private_timer:
+                self.private_timer.cancel()
+                self.private_timer = None
+            
+            await self._summarize_private_messages()
+            yield event.plain_result(self._get_resp("resp_summary_success"))
+        except Exception as e:
+            logger.error(f"DailyReportAnalysisAPI: 手动私聊上报失败: {e}")
+            yield event.plain_result(f"私聊上报失败: {str(e)}")
 
     @filter.command("stillalive群总结")
     async def manual_group_summary(self, event: AstrMessageEvent):
@@ -525,6 +573,9 @@ class DailyReportAnalysisAPI(Star):
                 self.private_messages.append(
                     {"时间": time_str, "用户": message_content, "你的回复": ""}
                 )
+                if self.private_timer:
+                    self.private_timer.cancel()
+                self.private_timer = asyncio.create_task(self._delay_private_summary_task(600))
 
     async def _delay_summarize_task(self, group_id, delay):
         """静默期等待任务"""
@@ -724,7 +775,9 @@ class DailyReportAnalysisAPI(Star):
         if not event.message_obj.group_id:
             if self.private_messages and not self.private_messages[-1].get("你的回复"):
                 self.private_messages[-1]["你的回复"] = reply_text
-                await self._send_private_immediately()
+                if self.private_timer:
+                    self.private_timer.cancel()
+                self.private_timer = asyncio.create_task(self._delay_private_summary_task(600))
         else:
             group_id = event.message_obj.group_id
             group_name = self._get_group_name(event)
@@ -756,12 +809,105 @@ class DailyReportAnalysisAPI(Star):
                 f"DailyReportAnalysisAPI: 记录机器人回复 ID={msg_id} [{group_name}] - {msg_content_formatted}"
             )
 
-    async def _send_private_immediately(self):
-        """立即发送私聊消息"""
-        if self.private_messages:
-            data = {
-                "type": "qq_messages",
-                "data": {"private_messages": list(self.private_messages)},
-            }
-            await self.api_service.send_data("/api/v1/status/sync/", data)
-            self.private_messages = []
+    async def _delay_private_summary_task(self, delay: int):
+        try:
+            await asyncio.sleep(delay)
+            await self._summarize_private_messages()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"DailyReportAnalysisAPI: 私聊延迟总结任务出错: {e}")
+        finally:
+            self.private_timer = None
+
+    async def _summarize_private_messages(self):
+        if not self.private_messages:
+            return
+
+        to_summarize = list(self.private_messages)
+        self.private_messages.clear()
+
+        first_time = to_summarize[0].get("时间", datetime.now().strftime("%H:%M"))
+        
+        dialogue_text = ""
+        for idx, m in enumerate(to_summarize):
+            dialogue_text += f"[回合{idx+1}]\n用户：{m.get('用户', '')}\n你：{m.get('你的回复', '')}\n"
+
+        provider_id = self.config.get("summary_provider_id")
+        
+        summary_user = ""
+        summary_bot = ""
+        
+        summary_topic = ""
+        summary_content = ""
+
+        if len(to_summarize) == 1:
+            # 只有一轮对话，绝对不丢失，直接上报原格式
+            final_user = to_summarize[0].get("用户", "")
+            final_bot = to_summarize[0].get("你的回复", "")
+        else:
+            # 多轮对话，调用 LLM 进行压缩精简
+            if provider_id:
+                try:
+                    persona_id = self.config.get("plugin_specific_persona_id")
+                    system_prompt = None
+                    if persona_id:
+                        persona_v3 = self.context.persona_manager.get_persona_v3_by_id(persona_id)
+                        if persona_v3:
+                            system_prompt = persona_v3.get("prompt")
+                    if not system_prompt:
+                        default_persona = await self.context.persona_manager.get_default_persona_v3()
+                        system_prompt = default_persona.get("prompt")
+
+                    prompt = PRIVATE_SUMMARY_PROMPT_TEMPLATE.format(dialogue_text=dialogue_text)
+                    
+                    response = await self.context.llm_generate(
+                        chat_provider_id=provider_id,
+                        system_prompt=system_prompt,
+                        prompt=prompt,
+                    )
+                    
+                    raw_result = response.completion_text.strip()
+                    if raw_result.startswith("```json"):
+                        raw_result = raw_result[7:]
+                    elif raw_result.startswith("```"):
+                        raw_result = raw_result[3:]
+                    if raw_result.endswith("```"):
+                        raw_result = raw_result[:-3]
+                    raw_result = raw_result.strip()
+
+                    try:
+                        import json
+                        result_json = json.loads(raw_result)
+                        summary_topic = result_json.get("topic", "")
+                        summary_content = result_json.get("content", "")
+                    except json.JSONDecodeError:
+                        logger.error(f"DailyReportAnalysisAPI: 私聊 LLM 返回的不是合法 JSON: {raw_result}")
+                except Exception as e:
+                    logger.error(f"DailyReportAnalysisAPI: 私聊总结处理失败: {e}")
+
+            # 多轮对话格式组装
+            if not summary_topic and not summary_content:
+                # 兜底机制：如果 LLM 失败或返回空，暴力拼接，绝对不丢弃任何多轮私聊
+                summary_topic = "多轮私聊记录"
+                summary_content = " / ".join([m.get("用户", "") for m in to_summarize if m.get("用户")])
+                if len(summary_content) > 100: summary_content = summary_content[:100] + "..."
+                
+            final_user = f"【话题】{summary_topic}"
+            final_bot = f"【总结】{summary_content}"
+
+        # 上报以首条消息时间为准
+        data = {
+            "type": "qq_messages",
+            "data": {
+                "private_messages": [
+                    {
+                        "时间": first_time,
+                        "用户": final_user,
+                        "你的回复": final_bot
+                    }
+                ]
+            },
+        }
+        await self.api_service.send_data("/api/v1/status/sync/", data)
+
