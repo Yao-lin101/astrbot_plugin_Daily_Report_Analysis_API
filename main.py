@@ -350,12 +350,75 @@ class DailyReportAnalysisAPI(Star):
             self._get_resp("resp_summary_success")
         )  # 这里借用成功的提示
 
+    @filter.command("stillalive白名单添加")
+    async def add_group_whitelist(
+        self, event: AstrMessageEvent, group_id: str | None = None
+    ):
+        """添加群聊白名单"""
+        if not self._check_permission(event):
+            yield event.plain_result(self._get_resp("resp_permission_denied"))
+            return
+        target_id = group_id or event.message_obj.group_id
+        if not target_id:
+            yield event.plain_result("请在群聊中使用或指定群号")
+            return
+        target_id = str(target_id)
+        if "group_whitelist" not in self.config:
+            self.config["group_whitelist"] = []
+        if target_id in self.config["group_whitelist"]:
+            yield event.plain_result(f"群号 {target_id} 已在白名单中")
+            return
+        self.config["group_whitelist"].append(target_id)
+        self.context.save_config()
+        yield event.plain_result(f"已添加群号 {target_id} 到白名单")
+
+    @filter.command("stillalive白名单删除")
+    async def remove_group_whitelist(
+        self, event: AstrMessageEvent, group_id: str | None = None
+    ):
+        """移除群聊白名单"""
+        if not self._check_permission(event):
+            yield event.plain_result(self._get_resp("resp_permission_denied"))
+            return
+        target_id = group_id or event.message_obj.group_id
+        if not target_id:
+            yield event.plain_result("请在群聊中使用或指定群号")
+            return
+        target_id = str(target_id)
+        if (
+            "group_whitelist" not in self.config
+            or target_id not in self.config["group_whitelist"]
+        ):
+            yield event.plain_result(f"群号 {target_id} 不在白名单中")
+            return
+        self.config["group_whitelist"].remove(target_id)
+        self.context.save_config()
+        yield event.plain_result(f"已从白名单移除群号 {target_id}")
+
+    @filter.command("stillalive白名单列表")
+    async def list_group_whitelist(self, event: AstrMessageEvent):
+        """查看群聊白名单"""
+        if not self._check_permission(event):
+            yield event.plain_result(self._get_resp("resp_permission_denied"))
+            return
+        whitelist = self.config.get("group_whitelist", [])
+        yield event.plain_result(
+            f"当前群聊白名单: {whitelist if whitelist else '全部群聊'}"
+        )
+
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):
         """监听消息"""
         # 仅屏蔽本插件的指令
         if any(cmd in event.message_str for cmd in self.internal_commands):
             return
+
+        # 群聊白名单检查
+        if event.message_obj.group_id and self.config.get("group_whitelist"):
+            if str(event.message_obj.group_id) not in [
+                str(i) for i in self.config["group_whitelist"]
+            ]:
+                return
 
         specific_user_id = str(self.config.get("specific_user_id", ""))
         if not specific_user_id:

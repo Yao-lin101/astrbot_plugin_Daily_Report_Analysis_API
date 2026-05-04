@@ -92,5 +92,11 @@
     "description": "回复：话题总结成功",
     "type": "string",
     "default": "话题总结任务完成！已经同步到冒险大厅（服务端）了！"
+  },
+  "group_whitelist": {
+    "description": "群聊白名单",
+    "type": "list",
+    "hint": "只在该列表中的群聊记录并进行话题总结。留空则处理所有群聊。请填写群号。",
+    "default": []
   }
 }
