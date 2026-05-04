@@ -369,7 +369,7 @@ class DailyReportAnalysisAPI(Star):
             yield event.plain_result(f"群号 {target_id} 已在白名单中")
             return
         self.config["group_whitelist"].append(target_id)
-        self.context.save_config()
+        self.context.set_config(self.config)
         yield event.plain_result(f"已添加群号 {target_id} 到白名单")
 
     @filter.command("stillalive白名单删除")
@@ -392,7 +392,7 @@ class DailyReportAnalysisAPI(Star):
             yield event.plain_result(f"群号 {target_id} 不在白名单中")
             return
         self.config["group_whitelist"].remove(target_id)
-        self.context.save_config()
+        self.context.set_config(self.config)
         yield event.plain_result(f"已从白名单移除群号 {target_id}")
 
     @filter.command("stillalive白名单列表")
