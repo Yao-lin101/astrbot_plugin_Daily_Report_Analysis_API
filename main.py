@@ -14,6 +14,31 @@ from .api_service import APIService
 from .message_utils import format_full_message, get_bot_nickname
 from .report_handler import ReportHandler
 
+SUMMARY_PROMPT_TEMPLATE = """对话背景：你在本群的昵称是【{bot_nickname}】，特定用户的昵称是【{user_nickname}】。
+角色说明（重要）：
+- 消息中带有【你】前缀的是你自己的发言；
+- 带有【用户】前缀的是特定用户的发言；
+- 带有【群友】前缀的是其他群成员的发言。
+
+任务目标：根据你的AI人设，判断以下群聊记录是否包含值得记录的观察、动态或话题，并以严格的 JSON 格式输出结果。
+特别要求：只有在你觉得符合人设观察价值时才进行总结。请忽略无意义的水群（如单发表情包、哈哈哈、收到等）。
+
+输出 JSON 格式要求（必须只返回合法的 JSON 对象，不带 Markdown 符号等包裹）：
+{{
+  "status": "COMPLETED", // 状态枚举：COMPLETED(有价值且话题已结束)、ONGOING(有价值但话题还在继续)、IGNORED(符合人设判断的毫无价值的水群)
+  "topics": [
+    {{
+      "topic": "这里填写一句话话题名称",
+      "content": "这里填写总结内容（50字内，以你的人设口吻讲述特定用户的动态）"
+    }}
+  ],
+  "next_start_id": 1050 // 整数。必须提供！你认为下一次总结应该从哪一条消息ID开始截断（通常是当前话题结束后的新话题起点ID，或最后一条消息的ID）
+}}
+
+--- 对话记录开始 ---
+{dialogue_text}
+--- 对话记录结束 ---"""
+
 
 @register(
     "astrbot_plugin_Daily_Report_Analysis_API",
@@ -64,6 +89,11 @@ class DailyReportAnalysisAPI(Star):
                     # 恢复 messages
                     saved_messages = data.get("group_messages_map", {})
                     for gid, msgs in saved_messages.items():
+                        # 兼容旧版本：为没有 id 的消息分配 id
+                        for msg in msgs:
+                            if "id" not in msg:
+                                self.message_id_counter[gid] += 1
+                                msg["id"] = self.message_id_counter[gid]
                         self.group_messages_map[gid] = deque(msgs, maxlen=500)
                 logger.info(f"DailyReportAnalysisAPI: 已从 {path} 加载持久化数据。")
             except Exception as e:
@@ -486,7 +516,7 @@ class DailyReportAnalysisAPI(Star):
                         self.group_timers[group_id].cancel()
 
                     self.group_timers[group_id] = asyncio.create_task(
-                        self._delay_summarize_task(group_id, 600)
+                        self._delay_summarize_task(group_id, 1800)
                     )
         else:
             # 私聊记录逻辑
@@ -541,6 +571,17 @@ class DailyReportAnalysisAPI(Star):
         if len(to_summarize) > 100:
             to_summarize = to_summarize[-100:]
 
+        # 严格连续消息预合并
+        merged_messages = []
+        for msg in to_summarize:
+            if merged_messages and merged_messages[-1]["sender_id"] == msg["sender_id"]:
+                # 连续发送，追加内容，保留第一条消息的 ID
+                content_parts = msg["content"].split(": ", 1)
+                text_to_add = content_parts[-1] if len(content_parts) > 1 else msg["content"]
+                merged_messages[-1]["content"] += "，" + text_to_add
+            else:
+                merged_messages.append(msg.copy())
+
         user_nickname = self.user_nicknames.get(group_id, "用户")
         event = self.group_events.get(group_id)
         bot_nickname = await get_bot_nickname(
@@ -551,7 +592,7 @@ class DailyReportAnalysisAPI(Star):
             group_id, "未知群聊"
         )
         last_time = to_summarize[-1].get("时间", "未知时间")
-        dialogue_text = "\n".join([m["content"] for m in to_summarize])
+        dialogue_text = "\n".join([f"[{m['id']}] {m['content']}" for m in merged_messages])
 
         logger.debug(
             f"DailyReportAnalysisAPI: 喂给 LLM 的对话文本详情:\n---\n{dialogue_text}\n---"
@@ -575,21 +616,10 @@ class DailyReportAnalysisAPI(Star):
                     )
                     system_prompt = default_persona.get("prompt")
 
-                prompt = (
-                    f"对话背景：你在本群的昵称是【{bot_nickname}】，特定用户的昵称是【{user_nickname}】。\n"
-                    f"角色说明（重要）：\n"
-                    f"- 消息中带有【你】前缀的是你自己（{bot_nickname}）的发言；\n"
-                    f"- 带有【用户】前缀的是特定用户（{user_nickname}）的发言；\n"
-                    f"- 带有【群友】前缀的是其他群成员的发言，他们不是你，也不是特定用户。\n\n"
-                    f"任务目标：精炼地总结以下这段群聊记录（50字以内）。\n"
-                    f"特别要求：请务必以你的人设口吻进行总结，并重点体现出特定用户【{user_nickname}】参与了哪些互动或发表了什么观点。\n"
-                    f"输出格式要求（务必严格遵守）：\n"
-                    f"话题：<这里填写一句话话题>\n"
-                    f"内容：<这里填写总结内容>\n"
-                    f"规则：1. 不要使用Markdown格式符号；2. 不要添加多余解释；3. 不要改变结构。\n\n"
-                    f"--- 对话记录开始 ---\n"
-                    f"{dialogue_text}\n"
-                    f"--- 对话记录结束 ---"
+                prompt = SUMMARY_PROMPT_TEMPLATE.format(
+                    bot_nickname=bot_nickname,
+                    user_nickname=user_nickname,
+                    dialogue_text=dialogue_text
                 )
 
                 response = await self.context.llm_generate(
@@ -597,30 +627,84 @@ class DailyReportAnalysisAPI(Star):
                     system_prompt=system_prompt,
                     prompt=prompt,
                 )
-                summary = response.completion_text.strip()
+                raw_result = response.completion_text.strip()
+                
+                # 尝试剥离 Markdown 包裹
+                if raw_result.startswith("```json"):
+                    raw_result = raw_result[7:]
+                elif raw_result.startswith("```"):
+                    raw_result = raw_result[3:]
+                if raw_result.endswith("```"):
+                    raw_result = raw_result[:-3]
+                raw_result = raw_result.strip()
+
+                try:
+                    import json
+                    result_json = json.loads(raw_result)
+                except json.JSONDecodeError:
+                    logger.error(f"DailyReportAnalysisAPI: LLM 返回的不是合法 JSON: {raw_result}")
+                    result_json = {"status": "IGNORED", "next_start_id": to_summarize[-1]["id"]}
+
+                status = result_json.get("status", "IGNORED")
+                topics = result_json.get("topics", [])
+                next_start_id = result_json.get("next_start_id", to_summarize[-1]["id"])
+                
+                logger.info(f"DailyReportAnalysisAPI: LLM判定状态={status}, topics_count={len(topics)}, next_start_id={next_start_id}")
+
+                if status == "COMPLETED" and topics:
+                    for t in topics:
+                        topic_str = t.get("topic", "未知话题")
+                        content_str = t.get("content", "")
+                        data = {
+                            "type": "qq_messages",
+                            "data": {
+                                "group_messages": [
+                                    {
+                                        "时间": last_time,
+                                        "群名称": group_name,
+                                        "用户在本群昵称": user_nickname,
+                                        "你在本群昵称": bot_nickname,
+                                        "话题总结": f"话题：{topic_str}\n内容：{content_str}",
+                                    }
+                                ]
+                            },
+                        }
+                        await self.api_service.send_data("/api/v1/status/sync/", data)
+                
+                # 更新截断点为下一个周期的开始
+                self.last_summarized_id[group_id] = next_start_id - 1
+
+                if status == "ONGOING":
+                    # 主动重试（重新发起30分钟计时）
+                    if group_id in self.group_timers:
+                        self.group_timers[group_id].cancel()
+                    self.group_timers[group_id] = asyncio.create_task(
+                        self._delay_summarize_task(group_id, 1800)
+                    )
+
             except Exception as e:
-                logger.error(f"DailyReportAnalysisAPI: 总结失败: {e}")
-                summary = "（总结失败）"
+                logger.error(f"DailyReportAnalysisAPI: 总结处理失败: {e}")
+                # 出现异常时也安全推进，防止卡死
+                self.last_summarized_id[group_id] = to_summarize[-1]["id"]
         else:
             summary = dialogue_text[:100] + "..."
+            data = {
+                "type": "qq_messages",
+                "data": {
+                    "group_messages": [
+                        {
+                            "时间": last_time,
+                            "群名称": group_name,
+                            "用户在本群昵称": user_nickname,
+                            "你在本群昵称": bot_nickname,
+                            "话题总结": summary,
+                        }
+                    ]
+                },
+            }
+            await self.api_service.send_data("/api/v1/status/sync/", data)
+            self.last_summarized_id[group_id] = to_summarize[-1]["id"]
 
-        data = {
-            "type": "qq_messages",
-            "data": {
-                "group_messages": [
-                    {
-                        "时间": last_time,
-                        "群名称": group_name,
-                        "用户在本群昵称": user_nickname,
-                        "你在本群昵称": bot_nickname,
-                        "话题总结": summary,
-                    }
-                ]
-            },
-        }
-        await self.api_service.send_data("/api/v1/status/sync/", data)
-
-        self.last_summarized_id[group_id] = pending[last_user_msg_index]["id"]
         self.active_groups.discard(group_id)
         self._save_data()
 
