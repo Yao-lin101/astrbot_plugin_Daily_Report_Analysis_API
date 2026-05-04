@@ -22,7 +22,7 @@ from .report_handler import ReportHandler
     "1.3.0",
 )
 class DailyReportAnalysisAPI(Star):
-    def __init__(self, context: Context, config: dict = None):
+    def __init__(self, context: Context, config: any = None):
         super().__init__(context)
         # 消息缓存: {group_id: deque([msg_obj, ...])}，每个群保留最近 500 条
         self.group_messages_map = defaultdict(lambda: deque(maxlen=500))
@@ -369,7 +369,8 @@ class DailyReportAnalysisAPI(Star):
             yield event.plain_result(f"群号 {target_id} 已在白名单中")
             return
         self.config["group_whitelist"].append(target_id)
-        self.context.set_config(self.config)
+        if hasattr(self.config, "save_config"):
+            self.config.save_config()
         yield event.plain_result(f"已添加群号 {target_id} 到白名单")
 
     @filter.command("stillalive白名单删除")
@@ -392,7 +393,8 @@ class DailyReportAnalysisAPI(Star):
             yield event.plain_result(f"群号 {target_id} 不在白名单中")
             return
         self.config["group_whitelist"].remove(target_id)
-        self.context.set_config(self.config)
+        if hasattr(self.config, "save_config"):
+            self.config.save_config()
         yield event.plain_result(f"已从白名单移除群号 {target_id}")
 
     @filter.command("stillalive白名单列表")
