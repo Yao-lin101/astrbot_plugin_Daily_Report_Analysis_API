@@ -843,8 +843,11 @@ class DailyReportAnalysisAPI(Star):
 
         if len(to_summarize) == 1:
             # 只有一轮对话，绝对不丢失，直接上报原格式
-            final_user = to_summarize[0].get("用户", "")
-            final_bot = to_summarize[0].get("你的回复", "")
+            payload_dict = {
+                "时间": first_time,
+                "用户": to_summarize[0].get("用户", ""),
+                "你的回复": to_summarize[0].get("你的回复", "")
+            }
         else:
             # 多轮对话，调用 LLM 进行压缩精简
             if provider_id:
@@ -893,20 +896,17 @@ class DailyReportAnalysisAPI(Star):
                 summary_content = " / ".join([m.get("用户", "") for m in to_summarize if m.get("用户")])
                 if len(summary_content) > 100: summary_content = summary_content[:100] + "..."
                 
-            final_user = f"【话题】{summary_topic}"
-            final_bot = f"【总结】{summary_content}"
+            payload_dict = {
+                "时间": first_time,
+                "话题": summary_topic,
+                "总结": summary_content
+            }
 
         # 上报以首条消息时间为准
         data = {
             "type": "qq_messages",
             "data": {
-                "private_messages": [
-                    {
-                        "时间": first_time,
-                        "用户": final_user,
-                        "你的回复": final_bot
-                    }
-                ]
+                "private_messages": [payload_dict]
             },
         }
         await self.api_service.send_data("/api/v1/status/sync/", data)
