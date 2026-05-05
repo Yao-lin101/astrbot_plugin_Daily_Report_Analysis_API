@@ -20,6 +20,24 @@
     "default": false,
     "hint": "是否允许机器人根据用户作息主动发送关怀消息"
   },
+  "max_active_messages_per_day": {
+    "description": "每日主动消息上限",
+    "type": "int",
+    "default": 3,
+    "hint": "每天最多主动发送多少条消息（防止打扰）"
+  },
+  "active_msg_min_interval": {
+    "description": "主动消息最小轮询间隔(分钟)",
+    "type": "int",
+    "default": 30,
+    "hint": "两次状态轮询的最小间隔时间"
+  },
+  "active_msg_max_interval": {
+    "description": "主动消息最大轮询间隔(分钟)",
+    "type": "int",
+    "default": 60,
+    "hint": "两次状态轮询的最大间隔时间"
+  },
   "summary_provider_id": {
     "description": "LLM Provider ID (用于话题总结)",
     "type": "string",
@@ -33,6 +51,12 @@
     "_special": "select_persona",
     "default": "",
     "hint": "在此处选择系统中已定义的人设。若此处未选择，则仍会尝试识别全局默认人格。"
+  },
+  "group_whitelist": {
+    "description": "群聊白名单",
+    "type": "list",
+    "hint": "只在该列表中的群聊记录并进行话题总结。留空则处理所有群聊。请填写群号。",
+    "default": []
   },
   "resp_permission_denied": {
     "description": "回复：无权限",
@@ -98,11 +122,5 @@
     "description": "回复：话题总结成功",
     "type": "string",
     "default": "话题总结任务完成！已经同步到冒险大厅（服务端）了！"
-  },
-  "group_whitelist": {
-    "description": "群聊白名单",
-    "type": "list",
-    "hint": "只在该列表中的群聊记录并进行话题总结。留空则处理所有群聊。请填写群号。",
-    "default": []
   }
 }

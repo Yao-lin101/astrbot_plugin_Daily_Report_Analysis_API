@@ -1,18 +1,24 @@
 import asyncio
 import json
 import traceback
+import random
 from datetime import datetime, timedelta
 
 from astrbot.api import logger
 from astrbot.core.message.components import Plain
 from astrbot.core.star.star_tools import StarTools
 
-PROMPT_PREDICT_TIME = """任务目标：根据以下角色的实时状态和近日活动记录，推测用户今天的第一次活跃时间（即用户今天可能醒来/开始看手机的时间）。
-如果用户当前正在活跃（例如熬夜中），请推测他们睡觉后醒来的时间。
+PROMPT_CHECK_STATUS = """任务目标：根据以下角色的当前实时状态记录，判断现在是否是一个合适的时机去主动发消息关怀用户，或者发起闲聊。
+- “关怀”（care）：例如提醒休息、提醒运动、早安晚安问候等。
+- “闲聊”（chat）：如果角色距离当前时间很近的活动是在 QQ 或者其他娱乐项目（如打游戏、看视频），可以考虑发起闲聊，假装不经意间提起某件事。
+
+如果当前不适合发消息，请将 need_message 置为 false。
 
 输出 JSON 格式要求（必须只返回合法的 JSON 对象，不带 Markdown 符号等包裹）：
 {{
-  "next_check_time": "08:30" // 格式必须为 HH:MM，24小时制
+  "need_message": true, // 是否需要立刻发送主动消息
+  "message_type": "chat", // "care" 或 "chat"（如果不发消息可为空）
+  "reason": "用户正在看视频，可以假装不经意问一下在看什么或者分享个趣事" // 简短说明理由
 }}
 
 --- 状态记录开始 ---
@@ -45,7 +51,9 @@ class ActiveMessageHandler:
         self.context = plugin.context
         self.api_service = plugin.api_service
         self.loop_task = None
-        self.next_check_time = None  # datetime object
+        self.next_check_time = datetime.now() + timedelta(minutes=1)
+        self.messages_sent_today = 0
+        self.last_reset_date = datetime.now().date()
 
     def start(self):
         if self.loop_task:
@@ -59,11 +67,11 @@ class ActiveMessageHandler:
             self.loop_task = None
 
     async def _main_loop(self):
-        # 初始启动时，如果还没有预测时间，先预测一下
         try:
             while True:
                 config = self.plugin.config or {}
                 enabled = config.get("enable_active_messaging", False)
+                max_msgs = config.get("max_active_messages_per_day", 3)
 
                 if not enabled:
                     await asyncio.sleep(60)
@@ -71,19 +79,27 @@ class ActiveMessageHandler:
 
                 now = datetime.now()
 
-                # 每天0点（或尚未初始化下次时间且非0点的情况下）获取作息预测
-                if self.next_check_time is None or (now.hour == 0 and now.minute < 5):
-                    await self._predict_first_active_time(now)
-                    # 避免在0点重复触发
-                    if now.hour == 0 and now.minute < 5:
-                        await asyncio.sleep(300)
-                    continue
+                if now.date() > self.last_reset_date:
+                    self.messages_sent_today = 0
+                    self.last_reset_date = now.date()
+
+                if self.messages_sent_today >= max_msgs:
+                    next_day = now + timedelta(days=1)
+                    self.next_check_time = next_day.replace(hour=0, minute=0, second=0, microsecond=0)
 
                 if now >= self.next_check_time:
-                    # 到达推测时间，执行检查
-                    await self._check_and_action()
+                    if self.messages_sent_today < max_msgs:
+                        sent = await self._check_and_action()
+                        if sent:
+                            self.messages_sent_today += 1
+                            logger.info(f"ActiveMessageHandler: 今日已发送主动消息 {self.messages_sent_today}/{max_msgs} 条")
+                    
+                    min_interval = config.get("active_msg_min_interval", 30)
+                    max_interval = config.get("active_msg_max_interval", 60)
+                    offset_minutes = random.randint(min_interval, max_interval)
+                    self.next_check_time = datetime.now() + timedelta(minutes=offset_minutes)
+                    logger.info(f"ActiveMessageHandler: 下次状态轮询时间设定为: {self.next_check_time}")
 
-                # 每分钟检查一次
                 await asyncio.sleep(60)
         except asyncio.CancelledError:
             pass
@@ -91,7 +107,6 @@ class ActiveMessageHandler:
             logger.error(
                 f"ActiveMessageHandler: loop failed - {e}\n{traceback.format_exc()}"
             )
-            # 异常恢复
             await asyncio.sleep(60)
             self.start()
 
@@ -171,14 +186,13 @@ class ActiveMessageHandler:
 
     async def _check_and_action(self):
         logger.info(
-            f"ActiveMessageHandler: 到达观察时间 {self.next_check_time}，正在评估状态..."
+            f"ActiveMessageHandler: 到达观察时间，正在评估状态..."
         )
         now = datetime.now()
         status_res = await self.api_service.fetch_status(memory="short")
         if not status_res or "prompt" not in status_res:
             logger.error("ActiveMessageHandler: 无法获取 short 状态，稍后重试。")
-            self.next_check_time = now + timedelta(minutes=15)
-            return
+            return False
 
         status_data = status_res["prompt"]
         system_prompt = await self._get_system_prompt()
@@ -186,7 +200,7 @@ class ActiveMessageHandler:
 
         provider_id = self.plugin.config.get("summary_provider_id")
         if not provider_id:
-            return
+            return False
 
         response = await self.context.llm_generate(
             chat_provider_id=provider_id,
@@ -199,47 +213,22 @@ class ActiveMessageHandler:
             need_message = result_json.get("need_message", False)
             reason = result_json.get("reason", "")
             message_type = result_json.get("message_type", "care")
-            continue_observing = result_json.get("continue_observing", False)
-            time_str = result_json.get("next_check_time", "")
 
             if need_message:
                 logger.info(
                     f"ActiveMessageHandler: 判定需要发消息，类型：{message_type}，理由：{reason}。准备生成回复..."
                 )
                 await self._generate_and_send_message(reason, message_type, status_data)
-                # 发送完后，停止今日观察，除非有新机制。这里设为None，会在次日0点重新预测。
-                self.next_check_time = (now + timedelta(days=1)).replace(
-                    hour=0, minute=0, second=0
-                )
+                return True
             else:
                 logger.info("ActiveMessageHandler: 判定不需要发消息。")
-                if continue_observing and time_str and ":" in time_str:
-                    h, m = map(int, time_str.split(":"))
-                    check_time = now.replace(hour=h, minute=m, second=0, microsecond=0)
-                    if check_time <= now:
-                        check_time += timedelta(days=1)
-                    # 如果推测到了明天，就直接设为明天0点由主循环处理
-                    if check_time.date() > now.date():
-                        self.next_check_time = check_time.replace(
-                            hour=0, minute=0, second=0
-                        )
-                    else:
-                        self.next_check_time = check_time
-                    logger.info(
-                        f"ActiveMessageHandler: 下次观察时间设为 {self.next_check_time}"
-                    )
-                else:
-                    # 停止观望
-                    logger.info("ActiveMessageHandler: 停止观望，等待次日0点。")
-                    self.next_check_time = (now + timedelta(days=1)).replace(
-                        hour=0, minute=0, second=0
-                    )
+                return False
 
         except Exception as e:
             logger.error(
                 f"ActiveMessageHandler: 解析评估状态失败 {e}。LLM 返回: {response.completion_text}"
             )
-            self.next_check_time = now + timedelta(minutes=60)
+            return False
 
     async def _generate_and_send_message(self, reason: str, message_type: str = "care", short_data: str = ""):
         if message_type == "chat":

@@ -437,26 +437,6 @@ class DailyReportAnalysisAPI(Star):
             self._get_resp("resp_summary_success")
         )  # 这里借用成功的提示
 
-    @filter.command("stillalive推测时间")
-    async def test_predict_time(self, event: AstrMessageEvent):
-        """测试指令：推测今日首次活动时间"""
-        if not self._check_permission(event):
-            yield event.plain_result(self._get_resp("resp_permission_denied"))
-            return
-
-        if not self.active_message_handler:
-            yield event.plain_result("主动消息机制未初始化。")
-            return
-
-        yield event.plain_result("正在获取数据并推测活动时间...")
-        now = datetime.now()
-        await self.active_message_handler._predict_first_active_time(now)
-
-        check_time = self.active_message_handler.next_check_time
-        yield event.plain_result(
-            f"推测完成，下一次活动（观望）时间被设定为: {check_time}"
-        )
-
     @filter.command("stillalive状态观望")
     async def test_check_status(self, event: AstrMessageEvent):
         """测试指令：根据当前状态判断是否需要发消息或继续观望"""
