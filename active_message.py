@@ -149,8 +149,10 @@ class ActiveMessageHandler:
                 h, m = map(int, time_str.split(":"))
                 check_time = now.replace(hour=h, minute=m, second=0, microsecond=0)
                 if check_time <= now:
-                    # 如果推测的时间比现在还早（可能是跨天），加一天
-                    check_time += timedelta(days=1)
+                    # 如果推测的时间比现在早，且时间差超过 12 小时（比如现在是深夜，推测明天早上的活动），则算作明天
+                    # 否则（比如现在是早上 10 点，推测 8 点半），说明是今天的活动时间被错过了，保留为今天以便系统立刻触发补偿检查
+                    if (now - check_time).total_seconds() > 12 * 3600:
+                        check_time += timedelta(days=1)
                 self.next_check_time = check_time
                 logger.info(
                     f"ActiveMessageHandler: 推测出下一次活动时间为 {self.next_check_time}"
