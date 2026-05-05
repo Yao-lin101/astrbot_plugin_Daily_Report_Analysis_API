@@ -245,10 +245,17 @@ class ActiveMessageHandler:
 
         gen_prompt = f"""任务目标：根据你的人设以及下面的角色实时状态与历史记忆档案，主动给用户发一条消息。
 当前的发送动机是：{reason}
-请直接输出你要发送的消息内容，不要有任何 Markdown 包裹或说明文字。
 
 --- 状态与记忆档案 ---
-{hybrid_data}"""
+{hybrid_data}
+--- 档案结束 ---
+
+【重要字数与风格限制】：
+1. 必须非常简短，最多 1-2 句话（尽量在 30 个字以内）。
+2. 就像朋友日常聊天随意开场一样，不要长篇大论，不要写成小作文。
+3. 最好用一个简单的问候、一个小发现或一个轻松的提问来结尾，目的是“让用户愿意轻松地回复你”。
+
+请直接输出你要发送的消息内容，不要有任何 Markdown 包裹或附加的说明文字。"""
 
         provider_id = self.plugin.config.get("summary_provider_id")
         response = await self.context.llm_generate(
