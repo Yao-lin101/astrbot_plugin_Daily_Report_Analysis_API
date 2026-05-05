@@ -269,7 +269,7 @@ class ActiveMessageHandler:
             try:
                 from astrbot.core.message.message_event_result import MessageChain
 
-                chain = MessageChain().message([Plain(message_content)])
+                chain = MessageChain().message(message_content)
                 # 这里我们假设用户是以私聊为主，目标是 specific_user_id
                 await StarTools.send_message_by_id(
                     type="FriendMessage",
