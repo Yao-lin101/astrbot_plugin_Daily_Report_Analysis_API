@@ -455,6 +455,21 @@ class DailyReportAnalysisAPI(Star):
             f"观望评估完成。目前的 next_check_time 状态为: {check_time}"
         )
 
+    @filter.command("stillalive重置主动消息计数")
+    async def reset_active_msg_count(self, event: AstrMessageEvent):
+        """测试指令：重置今日主动发消息的计数"""
+        if not self._check_permission(event):
+            yield event.plain_result(self._get_resp("resp_permission_denied"))
+            return
+
+        if not self.active_message_handler:
+            yield event.plain_result("主动消息机制未初始化。")
+            return
+            
+        self.active_message_handler.messages_sent_today = 0
+        self.active_message_handler.last_reset_date = datetime.now().date()
+        yield event.plain_result("今日主动消息发送计数已重置为 0。")
+
     @filter.command("stillalive强行关怀")
     async def test_force_care(
         self,
