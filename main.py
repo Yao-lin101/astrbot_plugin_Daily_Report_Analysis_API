@@ -186,6 +186,12 @@ class DailyReportAnalysisAPI(Star):
                 "stillalive清理缓存",
                 "stillalive日报",
                 "stillalive私聊上报",
+                "stillalive状态观望",
+                "stillalive强行关怀",
+                "stillalive重置主动消息计数",
+                "stillalive白名单添加",
+                "stillalive白名单删除",
+                "stillalive白名单列表",
             ]
         else:
             self.internal_commands = list(set(self.internal_commands))
