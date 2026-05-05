@@ -479,6 +479,7 @@ class DailyReportAnalysisAPI(Star):
     async def test_force_care(
         self,
         event: AstrMessageEvent,
+        message_type: str = "care",
         reason: str = "强制触发主动消息，随便说点什么吧。",
     ):
         """测试指令：直接生成并发送主动关怀消息"""
@@ -490,8 +491,8 @@ class DailyReportAnalysisAPI(Star):
             yield event.plain_result("主动消息机制未初始化。")
             return
 
-        yield event.plain_result(f"正在强行生成并发送关怀消息（动机：{reason}）...")
-        await self.active_message_handler._generate_and_send_message(reason)
+        yield event.plain_result(f"正在强行生成并发送消息（类型：{message_type}，动机：{reason}）...")
+        await self.active_message_handler._generate_and_send_message(reason, message_type, short_data="[这是强行关怀的默认短时记忆，由于直接跳过了第一步，此处短时记忆为空]")
         yield event.plain_result("执行结束。如果成功，指定用户应该已经收到了主动私聊。")
 
     @filter.command("stillalive白名单添加")

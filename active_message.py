@@ -19,13 +19,17 @@ PROMPT_PREDICT_TIME = """任务目标：根据以下角色的实时状态和近�
 {status_data}
 --- 状态记录结束 ---"""
 
-PROMPT_CHECK_STATUS = """任务目标：根据以下角色的当前实时状态记录，判断现在是否是一个合适的时机去主动发消息关怀用户（例如：提醒休息、提醒运动、早安问候等）。
+PROMPT_CHECK_STATUS = """任务目标：根据以下角色的当前实时状态记录，判断现在是否是一个合适的时机去主动发消息关怀用户，或者发起闲聊。
+- “关怀”（care）：例如提醒休息、提醒运动、早安晚安问候等。
+- “闲聊”（chat）：如果角色距离当前时间很近的活动是在 QQ 或者其他娱乐项目（如打游戏、看视频），可以考虑发起闲聊，假装不经意间提起某件事。
+
 如果你觉得当前不需要打扰，请判断下次什么时间再来观察（如果判断今天都不合适，可以将 continue_observing 设为 false）。
 
 输出 JSON 格式要求（必须只返回合法的 JSON 对象，不带 Markdown 符号等包裹）：
 {{
   "need_message": true, // 是否需要立刻发送主动消息
-  "reason": "用户似乎刚刚醒来，适合发一句早安并提醒喝水", // 简短说明理由
+  "message_type": "chat", // "care" 或 "chat"（如果不发消息可为空）
+  "reason": "用户正在看视频，可以假装不经意问一下在看什么或者分享个趣事", // 简短说明理由
   "continue_observing": false, // 如果 need_message 为 false，是否需要后续继续观察
   "next_check_time": "12:30" // 格式为 HH:MM，24小时制。如果不继续观察，该字段可为空
 }}
@@ -194,14 +198,15 @@ class ActiveMessageHandler:
             result_json = self._parse_json(response.completion_text)
             need_message = result_json.get("need_message", False)
             reason = result_json.get("reason", "")
+            message_type = result_json.get("message_type", "care")
             continue_observing = result_json.get("continue_observing", False)
             time_str = result_json.get("next_check_time", "")
 
             if need_message:
                 logger.info(
-                    f"ActiveMessageHandler: 判定需要发消息，理由：{reason}。准备获取 hybrid 状态并生成回复..."
+                    f"ActiveMessageHandler: 判定需要发消息，类型：{message_type}，理由：{reason}。准备生成回复..."
                 )
-                await self._generate_and_send_message(reason)
+                await self._generate_and_send_message(reason, message_type, status_data)
                 # 发送完后，停止今日观察，除非有新机制。这里设为None，会在次日0点重新预测。
                 self.next_check_time = (now + timedelta(days=1)).replace(
                     hour=0, minute=0, second=0
@@ -236,20 +241,24 @@ class ActiveMessageHandler:
             )
             self.next_check_time = now + timedelta(minutes=60)
 
-    async def _generate_and_send_message(self, reason: str):
-        hybrid_res = await self.api_service.fetch_status(memory="hybrid")
-        if not hybrid_res or "prompt" not in hybrid_res:
-            logger.error("ActiveMessageHandler: 获取 hybrid 状态失败，取消发送。")
-            return
-
-        hybrid_data = hybrid_res["prompt"]
+    async def _generate_and_send_message(self, reason: str, message_type: str = "care", short_data: str = ""):
+        if message_type == "chat":
+            hybrid_res = await self.api_service.fetch_status(memory="hybrid")
+            if not hybrid_res or "prompt" not in hybrid_res:
+                logger.error("ActiveMessageHandler: 获取 hybrid 状态失败，退回使用 short 状态。")
+                memory_data = short_data
+            else:
+                memory_data = hybrid_res["prompt"]
+        else:
+            # 关怀类直接使用短时记忆
+            memory_data = short_data
         system_prompt = await self._get_system_prompt()
 
         gen_prompt = f"""任务目标：根据你的人设以及下面的角色实时状态与历史记忆档案，主动给用户发一条消息。
 当前的发送动机是：{reason}
 
 --- 状态与记忆档案 ---
-{hybrid_data}
+{memory_data}
 --- 档案结束 ---
 
 【重要字数与风格限制】：
@@ -258,6 +267,8 @@ class ActiveMessageHandler:
 3. 最好用一个简单的问候、一个小发现或一个轻松的提问来结尾，目的是“让用户愿意轻松地回复你”。
 
 请直接输出你要发送的消息内容，不要有任何 Markdown 包裹或附加的说明文字。"""
+
+        logger.info(f"ActiveMessageHandler: 准备发送给大模型的生成提示词：\n{gen_prompt}")
 
         provider_id = self.plugin.config.get("summary_provider_id")
         response = await self.context.llm_generate(
