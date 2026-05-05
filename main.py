@@ -10,6 +10,7 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.message_components import At, Image, Node, Nodes, Plain, Reply
 from astrbot.api.star import Context, Star, StarTools, register
 
+from .active_message import ActiveMessageHandler
 from .api_service import APIService
 from .message_utils import format_full_message, get_bot_nickname
 from .report_handler import ReportHandler
@@ -83,6 +84,7 @@ class DailyReportAnalysisAPI(Star):
         self.config = config
         self.internal_commands = []
         self.api_service = None
+        self.active_message_handler = None
 
     def _get_data_path(self):
         return StarTools.get_data_dir() / "data.json"
@@ -150,12 +152,17 @@ class DailyReportAnalysisAPI(Star):
         self._load_data()
 
         if self.private_messages:
-            self.private_timer = asyncio.create_task(self._delay_private_summary_task(10))
+            self.private_timer = asyncio.create_task(
+                self._delay_private_summary_task(10)
+            )
 
         # 初始化 API 服务
         target_url = self.config.get("target_url", "")
         character_key = self.config.get("character_key", "")
         self.api_service = APIService(target_url, character_key)
+
+        self.active_message_handler = ActiveMessageHandler(self)
+        self.active_message_handler.start()
 
         # 自动识别插件内注册的所有指令名，实现自动屏蔽
         self._auto_collect_internal_commands()
@@ -190,6 +197,8 @@ class DailyReportAnalysisAPI(Star):
         self.group_timers.clear()
         if self.private_timer:
             self.private_timer.cancel()
+        if self.active_message_handler:
+            self.active_message_handler.stop()
         self._save_data()
 
     def _check_permission(self, event: AstrMessageEvent) -> bool:
@@ -358,7 +367,7 @@ class DailyReportAnalysisAPI(Star):
             if self.private_timer:
                 self.private_timer.cancel()
                 self.private_timer = None
-            
+
             await self._summarize_private_messages()
             yield event.plain_result(self._get_resp("resp_summary_success"))
         except Exception as e:
@@ -427,6 +436,63 @@ class DailyReportAnalysisAPI(Star):
         yield event.plain_result(
             self._get_resp("resp_summary_success")
         )  # 这里借用成功的提示
+
+    @filter.command("stillalive推测时间")
+    async def test_predict_time(self, event: AstrMessageEvent):
+        """测试指令：推测今日首次活动时间"""
+        if not self._check_permission(event):
+            yield event.plain_result(self._get_resp("resp_permission_denied"))
+            return
+
+        if not self.active_message_handler:
+            yield event.plain_result("主动消息机制未初始化。")
+            return
+
+        yield event.plain_result("正在获取数据并推测活动时间...")
+        now = datetime.now()
+        await self.active_message_handler._predict_first_active_time(now)
+
+        check_time = self.active_message_handler.next_check_time
+        yield event.plain_result(
+            f"推测完成，下一次活动（观望）时间被设定为: {check_time}"
+        )
+
+    @filter.command("stillalive状态观望")
+    async def test_check_status(self, event: AstrMessageEvent):
+        """测试指令：根据当前状态判断是否需要发消息或继续观望"""
+        if not self._check_permission(event):
+            yield event.plain_result(self._get_resp("resp_permission_denied"))
+            return
+
+        if not self.active_message_handler:
+            yield event.plain_result("主动消息机制未初始化。")
+            return
+
+        yield event.plain_result("正在进行状态观望与评估...")
+        await self.active_message_handler._check_and_action()
+        check_time = self.active_message_handler.next_check_time
+        yield event.plain_result(
+            f"观望评估完成。目前的 next_check_time 状态为: {check_time}"
+        )
+
+    @filter.command("stillalive强行关怀")
+    async def test_force_care(
+        self,
+        event: AstrMessageEvent,
+        reason: str = "强制触发主动消息，随便说点什么吧。",
+    ):
+        """测试指令：直接生成并发送主动关怀消息"""
+        if not self._check_permission(event):
+            yield event.plain_result(self._get_resp("resp_permission_denied"))
+            return
+
+        if not self.active_message_handler:
+            yield event.plain_result("主动消息机制未初始化。")
+            return
+
+        yield event.plain_result(f"正在强行生成并发送关怀消息（动机：{reason}）...")
+        await self.active_message_handler._generate_and_send_message(reason)
+        yield event.plain_result("执行结束。如果成功，指定用户应该已经收到了主动私聊。")
 
     @filter.command("stillalive白名单添加")
     async def add_group_whitelist(
@@ -575,7 +641,9 @@ class DailyReportAnalysisAPI(Star):
                 )
                 if self.private_timer:
                     self.private_timer.cancel()
-                self.private_timer = asyncio.create_task(self._delay_private_summary_task(600))
+                self.private_timer = asyncio.create_task(
+                    self._delay_private_summary_task(600)
+                )
 
     async def _delay_summarize_task(self, group_id, delay):
         """静默期等待任务"""
@@ -628,7 +696,9 @@ class DailyReportAnalysisAPI(Star):
             if merged_messages and merged_messages[-1]["sender_id"] == msg["sender_id"]:
                 # 连续发送，追加内容，保留第一条消息的 ID
                 content_parts = msg["content"].split(": ", 1)
-                text_to_add = content_parts[-1] if len(content_parts) > 1 else msg["content"]
+                text_to_add = (
+                    content_parts[-1] if len(content_parts) > 1 else msg["content"]
+                )
                 merged_messages[-1]["content"] += "，" + text_to_add
             else:
                 merged_messages.append(msg.copy())
@@ -643,7 +713,9 @@ class DailyReportAnalysisAPI(Star):
             group_id, "未知群聊"
         )
         last_time = to_summarize[-1].get("时间", "未知时间")
-        dialogue_text = "\n".join([f"[{m['id']}] {m['content']}" for m in merged_messages])
+        dialogue_text = "\n".join(
+            [f"[{m['id']}] {m['content']}" for m in merged_messages]
+        )
 
         logger.debug(
             f"DailyReportAnalysisAPI: 喂给 LLM 的对话文本详情:\n---\n{dialogue_text}\n---"
@@ -670,7 +742,7 @@ class DailyReportAnalysisAPI(Star):
                 prompt = SUMMARY_PROMPT_TEMPLATE.format(
                     bot_nickname=bot_nickname,
                     user_nickname=user_nickname,
-                    dialogue_text=dialogue_text
+                    dialogue_text=dialogue_text,
                 )
 
                 response = await self.context.llm_generate(
@@ -679,7 +751,7 @@ class DailyReportAnalysisAPI(Star):
                     prompt=prompt,
                 )
                 raw_result = response.completion_text.strip()
-                
+
                 # 尝试剥离 Markdown 包裹
                 if raw_result.startswith("```json"):
                     raw_result = raw_result[7:]
@@ -691,16 +763,24 @@ class DailyReportAnalysisAPI(Star):
 
                 try:
                     import json
+
                     result_json = json.loads(raw_result)
                 except json.JSONDecodeError:
-                    logger.error(f"DailyReportAnalysisAPI: LLM 返回的不是合法 JSON: {raw_result}")
-                    result_json = {"status": "IGNORED", "next_start_id": to_summarize[-1]["id"]}
+                    logger.error(
+                        f"DailyReportAnalysisAPI: LLM 返回的不是合法 JSON: {raw_result}"
+                    )
+                    result_json = {
+                        "status": "IGNORED",
+                        "next_start_id": to_summarize[-1]["id"],
+                    }
 
                 status = result_json.get("status", "IGNORED")
                 topics = result_json.get("topics", [])
                 next_start_id = result_json.get("next_start_id", to_summarize[-1]["id"])
-                
-                logger.info(f"DailyReportAnalysisAPI: LLM判定状态={status}, topics_count={len(topics)}, next_start_id={next_start_id}")
+
+                logger.info(
+                    f"DailyReportAnalysisAPI: LLM判定状态={status}, topics_count={len(topics)}, next_start_id={next_start_id}"
+                )
 
                 if status == "COMPLETED" and topics:
                     for t in topics:
@@ -721,7 +801,7 @@ class DailyReportAnalysisAPI(Star):
                             },
                         }
                         await self.api_service.send_data("/api/v1/status/sync/", data)
-                
+
                 # 更新截断点为下一个周期的开始
                 self.last_summarized_id[group_id] = next_start_id - 1
 
@@ -777,7 +857,9 @@ class DailyReportAnalysisAPI(Star):
                 self.private_messages[-1]["你的回复"] = reply_text
                 if self.private_timer:
                     self.private_timer.cancel()
-                self.private_timer = asyncio.create_task(self._delay_private_summary_task(600))
+                self.private_timer = asyncio.create_task(
+                    self._delay_private_summary_task(600)
+                )
         else:
             group_id = event.message_obj.group_id
             group_name = self._get_group_name(event)
@@ -828,16 +910,13 @@ class DailyReportAnalysisAPI(Star):
         self.private_messages.clear()
 
         first_time = to_summarize[0].get("时间", datetime.now().strftime("%H:%M"))
-        
+
         dialogue_text = ""
         for idx, m in enumerate(to_summarize):
-            dialogue_text += f"[回合{idx+1}]\n用户：{m.get('用户', '')}\n你：{m.get('你的回复', '')}\n"
+            dialogue_text += f"[回合{idx + 1}]\n用户：{m.get('用户', '')}\n你：{m.get('你的回复', '')}\n"
 
         provider_id = self.config.get("summary_provider_id")
-        
-        summary_user = ""
-        summary_bot = ""
-        
+
         summary_topic = ""
         summary_content = ""
 
@@ -846,7 +925,7 @@ class DailyReportAnalysisAPI(Star):
             payload_dict = {
                 "时间": first_time,
                 "用户": to_summarize[0].get("用户", ""),
-                "你的回复": to_summarize[0].get("你的回复", "")
+                "你的回复": to_summarize[0].get("你的回复", ""),
             }
         else:
             # 多轮对话，调用 LLM 进行压缩精简
@@ -855,21 +934,27 @@ class DailyReportAnalysisAPI(Star):
                     persona_id = self.config.get("plugin_specific_persona_id")
                     system_prompt = None
                     if persona_id:
-                        persona_v3 = self.context.persona_manager.get_persona_v3_by_id(persona_id)
+                        persona_v3 = self.context.persona_manager.get_persona_v3_by_id(
+                            persona_id
+                        )
                         if persona_v3:
                             system_prompt = persona_v3.get("prompt")
                     if not system_prompt:
-                        default_persona = await self.context.persona_manager.get_default_persona_v3()
+                        default_persona = (
+                            await self.context.persona_manager.get_default_persona_v3()
+                        )
                         system_prompt = default_persona.get("prompt")
 
-                    prompt = PRIVATE_SUMMARY_PROMPT_TEMPLATE.format(dialogue_text=dialogue_text)
-                    
+                    prompt = PRIVATE_SUMMARY_PROMPT_TEMPLATE.format(
+                        dialogue_text=dialogue_text
+                    )
+
                     response = await self.context.llm_generate(
                         chat_provider_id=provider_id,
                         system_prompt=system_prompt,
                         prompt=prompt,
                     )
-                    
+
                     raw_result = response.completion_text.strip()
                     if raw_result.startswith("```json"):
                         raw_result = raw_result[7:]
@@ -881,11 +966,14 @@ class DailyReportAnalysisAPI(Star):
 
                     try:
                         import json
+
                         result_json = json.loads(raw_result)
                         summary_topic = result_json.get("topic", "")
                         summary_content = result_json.get("content", "")
                     except json.JSONDecodeError:
-                        logger.error(f"DailyReportAnalysisAPI: 私聊 LLM 返回的不是合法 JSON: {raw_result}")
+                        logger.error(
+                            f"DailyReportAnalysisAPI: 私聊 LLM 返回的不是合法 JSON: {raw_result}"
+                        )
                 except Exception as e:
                     logger.error(f"DailyReportAnalysisAPI: 私聊总结处理失败: {e}")
 
@@ -893,21 +981,21 @@ class DailyReportAnalysisAPI(Star):
             if not summary_topic and not summary_content:
                 # 兜底机制：如果 LLM 失败或返回空，暴力拼接，绝对不丢弃任何多轮私聊
                 summary_topic = "多轮私聊记录"
-                summary_content = " / ".join([m.get("用户", "") for m in to_summarize if m.get("用户")])
-                if len(summary_content) > 100: summary_content = summary_content[:100] + "..."
-                
+                summary_content = " / ".join(
+                    [m.get("用户", "") for m in to_summarize if m.get("用户")]
+                )
+                if len(summary_content) > 100:
+                    summary_content = summary_content[:100] + "..."
+
             payload_dict = {
                 "时间": first_time,
                 "话题": summary_topic,
-                "总结": summary_content
+                "总结": summary_content,
             }
 
         # 上报以首条消息时间为准
         data = {
             "type": "qq_messages",
-            "data": {
-                "private_messages": [payload_dict]
-            },
+            "data": {"private_messages": [payload_dict]},
         }
         await self.api_service.send_data("/api/v1/status/sync/", data)
-

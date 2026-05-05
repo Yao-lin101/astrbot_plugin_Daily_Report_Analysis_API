@@ -14,6 +14,12 @@
     "type": "string",
     "hint": "需要监控的特定用户ID"
   },
+  "enable_active_messaging": {
+    "description": "启用主动消息",
+    "type": "boolean",
+    "default": false,
+    "hint": "是否允许机器人根据用户作息主动发送关怀消息"
+  },
   "summary_provider_id": {
     "description": "LLM Provider ID (用于话题总结)",
     "type": "string",

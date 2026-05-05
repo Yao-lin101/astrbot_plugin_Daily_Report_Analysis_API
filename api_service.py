@@ -52,3 +52,31 @@ class APIService:
         except Exception as e:
             logger.error(f"APIService: 获取日报时出错：{str(e)}")
             return None
+
+    async def fetch_status(self, memory: str = "short", q: str = ""):
+        """获取角色的实时活动状态"""
+        url = f"{self.base_url}/api/v1/bot/status/"
+        params = {"memory": memory}
+        if q:
+            params["q"] = q
+
+        headers = {
+            "X-Character-Key": self.character_key,
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, headers=headers) as response:
+                    try:
+                        res_data = await response.json()
+                        if response.status == 200:
+                            return res_data
+                        else:
+                            return res_data
+                    except Exception:
+                        logger.error(
+                            f"APIService: 获取状态失败，状态码：{response.status}"
+                        )
+                        return None
+        except Exception as e:
+            logger.error(f"APIService: 获取状态请求时出错：{str(e)}")
+            return None
