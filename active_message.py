@@ -11,9 +11,9 @@ PROMPT_PREDICT_TIME = """任务目标：根据以下角色的实时状态和近�
 如果用户当前正在活跃（例如熬夜中），请推测他们睡觉后醒来的时间。
 
 输出 JSON 格式要求（必须只返回合法的 JSON 对象，不带 Markdown 符号等包裹）：
-{
+{{
   "next_check_time": "08:30" // 格式必须为 HH:MM，24小时制
-}
+}}
 
 --- 状态记录开始 ---
 {status_data}
@@ -23,12 +23,12 @@ PROMPT_CHECK_STATUS = """任务目标：根据以下角色的当前实时状态�
 如果你觉得当前不需要打扰，请判断下次什么时间再来观察（如果判断今天都不合适，可以将 continue_observing 设为 false）。
 
 输出 JSON 格式要求（必须只返回合法的 JSON 对象，不带 Markdown 符号等包裹）：
-{
+{{
   "need_message": true, // 是否需要立刻发送主动消息
   "reason": "用户似乎刚刚醒来，适合发一句早安并提醒喝水", // 简短说明理由
   "continue_observing": false, // 如果 need_message 为 false，是否需要后续继续观察
   "next_check_time": "12:30" // 格式为 HH:MM，24小时制。如果不继续观察，该字段可为空
-}
+}}
 
 --- 状态记录开始 ---
 {status_data}
