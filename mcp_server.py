@@ -11,13 +11,31 @@ mcp = FastMCP("StillAlive-Status-MCP")
 # 1. 环境变量加载逻辑
 BASE_URL = os.environ.get("STILLALIVE_BASE_URL", "https://alive.ineed.asia/").rstrip("/")
 
-# 解析角色配置 JSON
-# 格式示例: [{"name": "e.e.", "display_code": "e.e.", "key": "xxx", "user_id": "123", "alias": ["老师"]}]
-CHARACTERS_RAW = os.environ.get("STILLALIVE_CHARACTERS", "[]")
-try:
-    CHARACTERS = json.loads(CHARACTERS_RAW)
-except Exception:
-    CHARACTERS = []
+# 解析角色配置
+CHARACTERS_RAW = os.environ.get("STILLALIVE_CHARACTERS", "[]").strip()
+CHARACTERS = []
+
+if CHARACTERS_RAW:
+    # 逻辑：如果是路径则检查并创建，否则解析字符串
+    # 判断是否看起来像个路径（包含斜杠或.json结尾）
+    is_path = "/" in CHARACTERS_RAW or CHARACTERS_RAW.endswith(".json")
+    
+    if is_path:
+        try:
+            # 如果文件不存在，自动创建初始模板
+            if not os.path.exists(CHARACTERS_RAW):
+                with open(CHARACTERS_RAW, "w", encoding="utf-8") as f:
+                    json.dump([], f, indent=2)
+            
+            with open(CHARACTERS_RAW, "r", encoding="utf-8-sig") as f:
+                CHARACTERS = json.load(f)
+        except Exception:
+            CHARACTERS = []
+    else:
+        try:
+            CHARACTERS = json.loads(CHARACTERS_RAW)
+        except Exception:
+            CHARACTERS = []
 
 # 建立快速查找索引
 DISPLAY_TO_CHAR = {c["display_code"]: c for c in CHARACTERS if "display_code" in c}
