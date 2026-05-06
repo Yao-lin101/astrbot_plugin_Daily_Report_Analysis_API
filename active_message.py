@@ -255,15 +255,42 @@ class ActiveMessageHandler:
         conversation_context = ""
         unified_origin = self.user_unified_origin
         if not unified_origin:
-             # 如果还没收到过消息，根据配置尝试拼凑一个（假设是私聊）
+             # 如果还没收到过消息，尝试在数据库中寻找包含该用户 ID 的会话
              specific_user_id = self.plugin.config.get("specific_user_id")
              if specific_user_id:
-                 unified_origin = f"aiocqhttp:person:{specific_user_id}"
+                 try:
+                     # 优先尝试常见的几种拼凑方式
+                     possible_origins = [
+                         f"aiocqhttp:person:{specific_user_id}",
+                         f"onebot:person:{specific_user_id}",
+                         f"qq_official:person:{specific_user_id}"
+                     ]
+                     
+                     for po in possible_origins:
+                         temp_cid = await self.context.conversation_manager.get_curr_conversation_id(po)
+                         if temp_cid:
+                             unified_origin = po
+                             break
+                     
+                     if not unified_origin:
+                         # 最后的兜底：遍历所有近期会话寻找匹配项
+                         all_convs = await self.context.conversation_manager.get_filtered_conversations(page_size=100)
+                         for conv_obj, _cnt in [all_convs] if isinstance(all_convs, tuple) else [(all_convs, 0)]:
+                             for c in conv_obj:
+                                 if str(specific_user_id) in c.user_id:
+                                     unified_origin = c.user_id
+                                     break
+                             if unified_origin: break
+                 except Exception as e:
+                     logger.error(f"ActiveMessageHandler: 自动搜索会话来源失败: {e}")
+        
+        logger.info(f"ActiveMessageHandler: 确定的会话来源为: {unified_origin}")
         
         cid = None
         if unified_origin:
             try:
                 cid = await self.context.conversation_manager.get_curr_conversation_id(unified_origin)
+                logger.info(f"ActiveMessageHandler: 获取到的对话 ID (cid): {cid}")
                 if cid:
                     conv = await self.context.conversation_manager.get_conversation(unified_origin, cid)
                     if conv:
@@ -275,6 +302,7 @@ class ActiveMessageHandler:
                             content = m.get("content", "")
                             if content:
                                 conversation_context += f"{role}: {content}\n"
+                        logger.info(f"ActiveMessageHandler: 成功提取到 {len(recent)} 条对话上下文。")
             except Exception as e:
                 logger.error(f"ActiveMessageHandler: 获取对话上下文失败: {e}")
 

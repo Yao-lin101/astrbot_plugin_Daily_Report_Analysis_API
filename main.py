@@ -557,6 +557,15 @@ class DailyReportAnalysisAPI(Star):
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):
         """监听消息"""
+        sender_id = str(event.get_sender_id())
+        specific_user_id = str(self.config.get("specific_user_id", ""))
+        
+        # 只要收到特定用户的消息（无论是指令还是闲聊），就重置主动消息轮询并记录来源
+        if specific_user_id and sender_id == specific_user_id:
+            if self.active_message_handler:
+                self.active_message_handler.reset_polling()
+                self.active_message_handler.user_unified_origin = event.unified_msg_origin
+
         # 仅屏蔽本插件的指令
         if any(cmd in event.message_str for cmd in self.internal_commands):
             return
@@ -646,11 +655,6 @@ class DailyReportAnalysisAPI(Star):
                 self.private_timer = asyncio.create_task(
                     self._delay_private_summary_task(600)
                 )
-                
-                # 收到私聊消息，重置主动消息轮询计时器
-                if self.active_message_handler:
-                    self.active_message_handler.reset_polling()
-                    self.active_message_handler.user_unified_origin = event.unified_msg_origin
 
     async def _delay_summarize_task(self, group_id, delay):
         """静默期等待任务"""
