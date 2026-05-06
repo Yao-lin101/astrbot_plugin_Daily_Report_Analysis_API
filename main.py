@@ -85,6 +85,17 @@ class DailyReportAnalysisAPI(Star):
         self.internal_commands = []
         self.api_service = None
         self.active_message_handler = None
+        
+        # 自动同步配置到 JSON 文件，供 MCP 服务器读取
+        try:
+            config_dir = os.path.join(self.context.get_data_dir(), "config")
+            os.makedirs(config_dir, exist_ok=True)
+            config_path = os.path.join(config_dir, "astrbot_plugin_Daily_Report_Analysis_API_config.json")
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(self.config, f, indent=4, ensure_ascii=False)
+            logger.info(f"DailyReportAnalysisAPI: 已同步配置到 {config_path}")
+        except Exception as e:
+            logger.error(f"DailyReportAnalysisAPI: 同步配置失败: {e}")
 
     def _get_data_path(self):
         return StarTools.get_data_dir() / "data.json"

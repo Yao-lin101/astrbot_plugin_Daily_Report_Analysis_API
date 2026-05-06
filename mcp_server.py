@@ -25,11 +25,18 @@ if os.path.exists(CONFIG_PATH):
         pass
 
 # 环境变量获取配置，提供默认值
-BASE_URL = plugin_config.get("target_url") or os.environ.get("STILLALIVE_BASE_URL", "")
+BASE_URL = plugin_config.get("target_url")
+if not BASE_URL:
+    BASE_URL = os.environ.get("STILLALIVE_BASE_URL", "")
 BASE_URL = BASE_URL.rstrip("/")
-CHARACTER_KEY = plugin_config.get("character_key") or os.environ.get(
-    "STILLALIVE_CHARACTER_KEY", ""
-)
+
+if BASE_URL and not BASE_URL.startswith("http"):
+    # 如果配置里没写协议，尝试补全
+    BASE_URL = "http://" + BASE_URL
+
+CHARACTER_KEY = plugin_config.get("character_key")
+if not CHARACTER_KEY:
+    CHARACTER_KEY = os.environ.get("STILLALIVE_CHARACTER_KEY", "")
 
 
 # 如果有全局的请求头鉴权需求，可以在这里添加
