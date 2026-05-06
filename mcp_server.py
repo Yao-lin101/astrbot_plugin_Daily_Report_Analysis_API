@@ -19,7 +19,7 @@ CONFIG_PATH = os.path.join(
 plugin_config = {}
 if os.path.exists(CONFIG_PATH):
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        with open(CONFIG_PATH, "r", encoding="utf-8-sig") as f:
             plugin_config = json.load(f)
     except Exception:
         pass
@@ -28,11 +28,12 @@ if os.path.exists(CONFIG_PATH):
 BASE_URL = plugin_config.get("target_url")
 if not BASE_URL:
     BASE_URL = os.environ.get("STILLALIVE_BASE_URL", "")
-BASE_URL = BASE_URL.rstrip("/")
 
-if BASE_URL and not BASE_URL.startswith("http"):
-    # 如果配置里没写协议，尝试补全
-    BASE_URL = "http://" + BASE_URL
+if BASE_URL:
+    BASE_URL = BASE_URL.rstrip("/")
+    if not BASE_URL.startswith("http"):
+        # 如果配置里没写协议，尝试补全
+        BASE_URL = "http://" + BASE_URL
 
 CHARACTER_KEY = plugin_config.get("character_key")
 if not CHARACTER_KEY:
@@ -59,9 +60,12 @@ SPECIFIC_USER_ID = plugin_config.get("specific_user_id") or "e.e."
     )
 )
 async def get_character_status() -> str:
+    if not BASE_URL:
+        return "获取状态失败：未配置目标 URL (target_url)。请检查插件配置或设置 STILLALIVE_BASE_URL 环境变量。"
+
     today_str = datetime.now().strftime("%Y-%m-%d")
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30.0) as client:
         # 1. 并发获取三个 API 的数据
         headers = get_headers()
         try:
@@ -75,7 +79,8 @@ async def get_character_status() -> str:
             )
 
             if config_res.status_code != 200 or status_res.status_code != 200:
-                return f"获取状态失败，API 返回异常。\nConfig Status: {config_res.status_code}\nStatus API: {status_res.status_code}\nReport API: {report_res.status_code}\nHeaders sent: {headers}"
+                return (f"获取状态失败，API 返回异常。\n"
+                        f"Config Status: {config_res.status_code}, Status API: {status_res.status_code}")
 
             config_data = config_res.json()
             status_data = status_res.json()
