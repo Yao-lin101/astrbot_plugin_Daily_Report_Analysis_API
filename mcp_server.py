@@ -164,52 +164,73 @@ async def get_character_status(display_code: str) -> str:
     vital_config_dict = config_data.get("status_config", {}).get("vital_signs", {})
     config_map = {item["key"]: item for item in vital_config_dict.values()}
 
-    realtime_lines = []
+    # ========== 解析 2: 动态解析所有数据块 ==========
+    sections = []
     status_categories = status_data.get("status_data", {})
-
-    for category_name, category_info in status_categories.items():
-        cat_data = category_info.get("data", {})
+    
+    for cat_key, cat_info in status_categories.items():
+        cat_data = cat_info.get("data", {})
+        cat_time_str = cat_info.get("updated_at")
+        
+        if not cat_data:
+            continue
+            
+        # 计算该块的距今时间
+        time_display = ""
+        if cat_time_str:
+            try:
+                cat_time = parse(cat_time_str)
+                if cat_time.tzinfo is None:
+                    cat_time = cat_time.replace(tzinfo=timezone.utc)
+                
+                delta = now_beijing - cat_time
+                delta_seconds = delta.total_seconds()
+                
+                # 剔除超过 24 小时（1天）的过时数据块
+                if delta_seconds > 86400:
+                    continue
+                
+                if delta_seconds < 60: t_ago = "刚刚"
+                elif delta_seconds < 3600: t_ago = f"{int(delta_seconds // 60)} 分钟前"
+                else: t_ago = f"{int(delta_seconds // 3600)} 小时前"
+                time_display = f"({t_ago})"
+            except:
+                pass
+        
+        # 格式化该块的数据
+        lines = []
         for k, v in cat_data.items():
             if k in config_map:
                 cfg = config_map[k]
                 desc = cfg.get("description", cfg.get("label", k))
                 suffix = cfg.get("suffix", "")
-                realtime_lines.append(f"{desc}：{v}{suffix}")
+                lines.append(f"  - {desc}：{v}{suffix}")
             else:
-                realtime_lines.append(f"{k}：{v}")
+                lines.append(f"  - {k}：{v}")
+        
+        if lines:
+            sections.append(f"[{cat_key}] {time_display}\n" + "\n".join(lines))
 
+    realtime_text = "\n\n".join(sections) if sections else "暂无实时数据。"
+
+    # ========== 解析 3: 全局最新活跃汇总 ==========
     mac_info = status_categories.get("mac", {})
     vital_info = status_categories.get("vital_signs", {})
-
-    mac_time_str = mac_info.get("updated_at", "1970-01-01T00:00:00Z")
-    phone_time_str = vital_info.get("updated_at", "1970-01-01T00:00:00Z")
-
+    
     try:
-        mac_time = parse(mac_time_str)
-        phone_time = parse(phone_time_str)
-        # 统一时区处理
-        if mac_time.tzinfo is None: mac_time = mac_time.replace(tzinfo=timezone.utc)
-        if phone_time.tzinfo is None: phone_time = phone_time.replace(tzinfo=timezone.utc)
+        m_time = parse(mac_info.get("updated_at", "1970-01-01T00:00:00Z")).replace(tzinfo=timezone.utc)
+        v_time = parse(vital_info.get("updated_at", "1970-01-01T00:00:00Z")).replace(tzinfo=timezone.utc)
         
-        now = datetime.now(timezone.utc)
-
-        if mac_time > phone_time:
-            latest_time, app_name = mac_time, mac_info.get("data", {}).get("mac", "未知App")
-            latest_str = f"mac：{app_name}"
+        if m_time > v_time:
+            latest_time, app_name = m_time, mac_info.get("data", {}).get("mac", "未知")
+            latest_str = f"Mac 正在使用：{app_name}"
         else:
-            latest_time, app_name = phone_time, vital_info.get("data", {}).get("phone", "未知App")
-            latest_str = f"phone：{app_name}"
+            latest_time, app_name = v_time, vital_info.get("data", {}).get("phone", "未知")
+            latest_str = f"手机正在使用：{app_name}"
 
-        delta_seconds = (now - latest_time).total_seconds()
-        if delta_seconds < 60: time_ago = "刚刚"
-        elif delta_seconds < 3600: time_ago = f"{int(delta_seconds // 60)} 分钟前"
-        else: time_ago = f"{int(delta_seconds // 3600)} 小时前"
-
-        latest_formatted = f"{latest_str} （数据时间：{latest_time.strftime('%H:%M')}，距今 {time_ago}）"
-    except Exception as e:
-        latest_formatted = f"解析时间失败：{str(e)}"
-
-    realtime_text = "\n".join(realtime_lines) if realtime_lines else "暂无实时数据。"
+        latest_formatted = f"{latest_str} （最后活跃：{latest_time.astimezone(tz_beijing).strftime('%H:%M')}）"
+    except:
+        latest_formatted = "无法解析最新活跃时间"
 
     return f"""角色在 {today_str} 的日报内容：
 {report_content}
@@ -217,7 +238,7 @@ async def get_character_status(display_code: str) -> str:
 实时数据：
 {realtime_text}
 
-最新状态：
+概览：
 {latest_formatted}"""
 
 @mcp.tool(
