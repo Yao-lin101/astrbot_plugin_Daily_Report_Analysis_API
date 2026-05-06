@@ -1,7 +1,7 @@
 import os
 import json
 import httpx
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dateutil.parser import parse
 from mcp.server.fastmcp import FastMCP
 
@@ -133,7 +133,11 @@ async def get_character_status(display_code: str) -> str:
     if not BASE_URL:
         return "获取状态失败：未配置 STILLALIVE_BASE_URL。"
 
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    # 强制使用北京时间 (UTC+8) 获取日期
+    tz_beijing = timezone(timedelta(hours=8))
+    now_beijing = datetime.now(tz_beijing)
+    today_str = now_beijing.strftime("%Y-%m-%d")
+    
     headers = get_headers(display_code)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -207,7 +211,7 @@ async def get_character_status(display_code: str) -> str:
 
     realtime_text = "\n".join(realtime_lines) if realtime_lines else "暂无实时数据。"
 
-    return f"""角色的今日日报：
+    return f"""角色在 {today_str} 的日报内容：
 {report_content}
 
 实时数据：
