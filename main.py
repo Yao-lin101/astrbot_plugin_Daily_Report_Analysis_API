@@ -650,6 +650,7 @@ class DailyReportAnalysisAPI(Star):
                 # 收到私聊消息，重置主动消息轮询计时器
                 if self.active_message_handler:
                     self.active_message_handler.reset_polling()
+                    self.active_message_handler.user_unified_origin = event.unified_msg_origin
 
     async def _delay_summarize_task(self, group_id, delay):
         """静默期等待任务"""

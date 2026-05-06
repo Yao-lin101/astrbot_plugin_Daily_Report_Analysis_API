@@ -54,6 +54,7 @@ class ActiveMessageHandler:
         self.next_check_time = datetime.now() + timedelta(minutes=1)
         self.messages_sent_today = 0
         self.last_reset_date = datetime.now().date()
+        self.user_unified_origin = None
 
     def start(self):
         if self.loop_task:
@@ -249,6 +250,33 @@ class ActiveMessageHandler:
             # 关怀类直接使用短时记忆
             memory_data = short_data
         system_prompt = await self._get_system_prompt()
+        
+        # 获取最近的私聊对话上下文
+        conversation_context = ""
+        unified_origin = self.user_unified_origin
+        if not unified_origin:
+             # 如果还没收到过消息，根据配置尝试拼凑一个（假设是私聊）
+             specific_user_id = self.plugin.config.get("specific_user_id")
+             if specific_user_id:
+                 unified_origin = f"aiocqhttp:person:{specific_user_id}"
+        
+        cid = None
+        if unified_origin:
+            try:
+                cid = await self.context.conversation_manager.get_curr_conversation_id(unified_origin)
+                if cid:
+                    conv = await self.context.conversation_manager.get_conversation(unified_origin, cid)
+                    if conv:
+                        history = json.loads(conv.history)
+                        # 取最近 10 条
+                        recent = history[-10:]
+                        for m in recent:
+                            role = "用户" if m["role"] == "user" else "你"
+                            content = m.get("content", "")
+                            if content:
+                                conversation_context += f"{role}: {content}\n"
+            except Exception as e:
+                logger.error(f"ActiveMessageHandler: 获取对话上下文失败: {e}")
 
         gen_prompt = f"""任务目标：根据你的人设以及下面的角色实时状态与历史记忆档案，主动给用户发一条消息。
 当前的发送动机是：{reason}
@@ -256,6 +284,10 @@ class ActiveMessageHandler:
 --- 状态与记忆档案 ---
 {memory_data}
 --- 档案结束 ---
+
+--- 最近的私聊对话上下文 ---
+{conversation_context if conversation_context else "（暂无最近对话记录）"}
+--- 上下文结束 ---
 
 【重要字数与风格限制】：
 1. 必须非常简短，最多 1-2 句话（尽量在 30 个字以内）。
@@ -294,6 +326,18 @@ class ActiveMessageHandler:
                     platform="aiocqhttp",
                 )
                 logger.info("ActiveMessageHandler: 主动消息发送成功。")
+                
+                # 记录到对话历史中
+                if cid and unified_origin:
+                    try:
+                        conv = await self.context.conversation_manager.get_conversation(unified_origin, cid)
+                        if conv:
+                             history = json.loads(conv.history)
+                             history.append({"role": "assistant", "content": message_content})
+                             await self.context.conversation_manager.update_conversation(unified_origin, cid, history=history)
+                             logger.info("ActiveMessageHandler: 已将主动消息写入对话历史。")
+                    except Exception as e:
+                         logger.error(f"ActiveMessageHandler: 写入对话历史失败: {e}")
 
                 # 将这条主动发送的消息写入 private_messages 中
                 time_str = datetime.now().strftime("%H:%M")
