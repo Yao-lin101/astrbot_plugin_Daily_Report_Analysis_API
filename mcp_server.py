@@ -25,9 +25,7 @@ if os.path.exists(CONFIG_PATH):
         pass
 
 # 环境变量获取配置，提供默认值
-BASE_URL = plugin_config.get("target_url") or os.environ.get(
-    "STILLALIVE_BASE_URL", ""
-)
+BASE_URL = plugin_config.get("target_url") or os.environ.get("STILLALIVE_BASE_URL", "")
 BASE_URL = BASE_URL.rstrip("/")
 CHARACTER_KEY = plugin_config.get("character_key") or os.environ.get(
     "STILLALIVE_CHARACTER_KEY", ""
@@ -42,10 +40,13 @@ def get_headers():
     return headers
 
 
-@mcp.tool()
-async def get_character_status() -> str:
-    """获取角色 e.e. 的最新实时状态数据，包括步数、使用的App、电量、最新动向以及今日日报记录等。"""
+SPECIFIC_USER_ID = plugin_config.get("specific_user_id") or "e.e."
 
+
+@mcp.tool(
+    description=f"获取目标用户（{SPECIFIC_USER_ID}）的最新实时状态数据。包括今日步数、电量、当前所在App、活动动向及今日日报。当群内或私聊中有人问及 {SPECIFIC_USER_ID} 目前在干嘛、身体状态如何时调用此工具查阅。绝对不要用来查询其他人的状态。"
+)
+async def get_character_status() -> str:
     today_str = datetime.now().strftime("%Y-%m-%d")
 
     async with httpx.AsyncClient() as client:
@@ -149,10 +150,11 @@ async def get_character_status() -> str:
     return final_output
 
 
-@mcp.tool()
+@mcp.tool(
+    description=f"搜索目标用户（{SPECIFIC_USER_ID}）的长期历史记忆、过去发生的事件、话题或习惯偏好。当群内或私聊中需要回忆与 {SPECIFIC_USER_ID} 以前发生的事情，或者需要查阅该用户的历史资料时调用。"
+)
 async def search_historical_memory(query: str) -> str:
-    """搜索角色的长期历史记忆、过去发生的事件、话题或习惯偏好。当用户询问以前发生的事情，或者需要查阅角色过去的资料时调用。
-
+    """
     Args:
         query: 搜索关键词，例如 "周末去哪里玩"、"关于找工作的讨论"
     """
