@@ -563,7 +563,7 @@ class DailyReportAnalysisAPI(Star):
         # 只要收到特定用户的消息（无论是指令还是闲聊），就重置主动消息轮询并记录来源
         if specific_user_id and sender_id == specific_user_id:
             if self.active_message_handler:
-                self.active_message_handler.reset_polling()
+                self.active_message_handler.reset_polling(min_int=60, max_int=120, reason="用户互动")
                 self.active_message_handler.user_unified_origin = event.unified_msg_origin
 
         # 仅屏蔽本插件的指令

@@ -89,17 +89,19 @@ class ActiveMessageHandler:
                     self.next_check_time = next_day.replace(hour=0, minute=0, second=0, microsecond=0)
 
                 if now >= self.next_check_time:
+                    sent = False
                     if self.messages_sent_today < max_msgs:
                         sent = await self._check_and_action()
                         if sent:
                             self.messages_sent_today += 1
                             logger.info(f"ActiveMessageHandler: 今日已发送主动消息 {self.messages_sent_today}/{max_msgs} 条")
                     
-                    min_interval = config.get("active_msg_min_interval", 30)
-                    max_interval = config.get("active_msg_max_interval", 60)
-                    offset_minutes = random.randint(min_interval, max_interval)
-                    self.next_check_time = datetime.now() + timedelta(minutes=offset_minutes)
-                    logger.info(f"ActiveMessageHandler: 下次状态轮询时间设定为: {self.next_check_time}")
+                    if sent:
+                        # 发送成功后，拉长下一次轮询的间隔
+                        self.reset_polling(min_int=60, max_int=120, reason="发送消息")
+                    else:
+                        # 未发送（观望中），保持原有频率
+                        self.reset_polling(reason="观望结束")
 
                 await asyncio.sleep(60)
         except asyncio.CancelledError:
@@ -110,13 +112,13 @@ class ActiveMessageHandler:
             )
             await asyncio.sleep(60)
 
-    def reset_polling(self):
+    def reset_polling(self, min_int=None, max_int=None, reason="互动"):
         config = self.plugin.config or {}
-        min_interval = config.get("active_msg_min_interval", 30)
-        max_interval = config.get("active_msg_max_interval", 60)
+        min_interval = min_int if min_int is not None else config.get("active_msg_min_interval", 30)
+        max_interval = max_int if max_int is not None else config.get("active_msg_max_interval", 60)
         offset_minutes = random.randint(min_interval, max_interval)
         self.next_check_time = datetime.now() + timedelta(minutes=offset_minutes)
-        logger.info(f"ActiveMessageHandler: 收到私聊互动，已重置主动消息轮询时间至 {self.next_check_time}")
+        logger.info(f"ActiveMessageHandler: 收到{reason}，已重置主动消息轮询时间至 {self.next_check_time} ({offset_minutes}分钟后)")
 
     async def _get_system_prompt(self):
         config = self.plugin.config or {}
@@ -238,6 +240,31 @@ class ActiveMessageHandler:
             )
             return False
 
+    def _clean_message_content(self, content):
+        """清洗消息内容，去除 think 块、system_reminder 和 JSON 结构"""
+        import re
+        if isinstance(content, list):
+            # 处理 AstrBot 的组件化消息格式
+            text_parts = []
+            for part in content:
+                if isinstance(part, dict):
+                    if part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+                    # 忽略 type 为 think 的部分
+                elif isinstance(part, str):
+                    text_parts.append(part)
+            content = "".join(text_parts)
+        
+        if not isinstance(content, str):
+            return ""
+            
+        # 去除 <system_reminder>...</system_reminder> 及其内容
+        content = re.sub(r'<system_reminder>.*?</system_reminder>', '', content, flags=re.DOTALL)
+        # 去除可能的 Markdown 思考块
+        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+        
+        return content.strip()
+
     async def _generate_and_send_message(self, reason: str, message_type: str = "care", short_data: str = ""):
         if message_type == "chat":
             hybrid_res = await self.api_service.fetch_status(memory="hybrid")
@@ -299,7 +326,8 @@ class ActiveMessageHandler:
                         recent = history[-10:]
                         for m in recent:
                             role = "用户" if m["role"] == "user" else "你"
-                            content = m.get("content", "")
+                            raw_content = m.get("content", "")
+                            content = self._clean_message_content(raw_content)
                             if content:
                                 conversation_context += f"{role}: {content}\n"
                         logger.info(f"ActiveMessageHandler: 成功提取到 {len(recent)} 条对话上下文。")
