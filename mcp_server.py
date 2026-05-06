@@ -44,7 +44,12 @@ SPECIFIC_USER_ID = plugin_config.get("specific_user_id") or "e.e."
 
 
 @mcp.tool(
-    description=f"获取目标用户（{SPECIFIC_USER_ID}）的最新实时状态数据。包括今日步数、电量、当前所在App、活动动向及今日日报。当群内或私聊中有人问及 {SPECIFIC_USER_ID} 目前在干嘛、身体状态如何时调用此工具查阅。绝对不要用来查询其他人的状态。"
+    description=(
+        f"【核心状态工具】获取目标用户（{SPECIFIC_USER_ID}）的真实实时数据。 "
+        f"当用户（即 {SPECIFIC_USER_ID}，或其自称为'老师'、'我'）询问其目前的实时状态、"
+        "步数、电量、正在使用的App、活动动向或查看今日日报时，你必须调用此工具。 "
+        "请记住：你本身没有任何实时监控能力，严禁通过推测或编造来回复，必须以此工具返回的数据为准。"
+    )
 )
 async def get_character_status() -> str:
     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -151,7 +156,11 @@ async def get_character_status() -> str:
 
 
 @mcp.tool(
-    description=f"搜索目标用户（{SPECIFIC_USER_ID}）的长期历史记忆、过去发生的事件、话题或习惯偏好。当群内或私聊中需要回忆与 {SPECIFIC_USER_ID} 以前发生的事情，或者需要查阅该用户的历史资料时调用。"
+    description=(
+        f"【长期记忆检索】通过语义搜索关于用户（{SPECIFIC_USER_ID}）的长时记忆档案、过去发生的事件或话题偏好。 "
+        "当用户询问以前发生过的事、过去的经历、曾经的讨论或需要查阅过去的资料时调用。 "
+        "请利用此工具获取真实的历史线索，避免回答‘我不记得了’。"
+    )
 )
 async def search_historical_memory(query: str) -> str:
     """
