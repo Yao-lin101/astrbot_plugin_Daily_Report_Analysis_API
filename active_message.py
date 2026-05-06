@@ -108,7 +108,14 @@ class ActiveMessageHandler:
                 f"ActiveMessageHandler: loop failed - {e}\n{traceback.format_exc()}"
             )
             await asyncio.sleep(60)
-            self.start()
+
+    def reset_polling(self):
+        config = self.plugin.config or {}
+        min_interval = config.get("active_msg_min_interval", 30)
+        max_interval = config.get("active_msg_max_interval", 60)
+        offset_minutes = random.randint(min_interval, max_interval)
+        self.next_check_time = datetime.now() + timedelta(minutes=offset_minutes)
+        logger.info(f"ActiveMessageHandler: 收到私聊互动，已重置主动消息轮询时间至 {self.next_check_time}")
 
     async def _get_system_prompt(self):
         config = self.plugin.config or {}
