@@ -242,9 +242,17 @@ async def get_character_status(display_code: str) -> str:
         latest_time, app_name = v_time, vital_info.get("data", {}).get("phone", "未知")
         latest_str = f"手机正在使用：{app_name}"
 
-    # 转换到北京时间显示
+    # 转换到相对时间风格显示
     try:
-        latest_formatted = f"{latest_str} （最后活跃：{latest_time.astimezone(tz_beijing).strftime('%H:%M')}）"
+        delta = now_utc - latest_time
+        delta_seconds = delta.total_seconds()
+        
+        if delta_seconds < 60: t_ago = "刚刚"
+        elif delta_seconds < 3600: t_ago = f"{int(delta_seconds // 60)} 分钟前"
+        elif delta_seconds < 86400: t_ago = f"{int(delta_seconds // 3600)} 小时前"
+        else: t_ago = f"{int(delta_seconds // 86400)} 天前"
+        
+        latest_formatted = f"{latest_str} （最后活跃：{t_ago}）"
     except:
         latest_formatted = "无法解析最新活跃时间"
 
