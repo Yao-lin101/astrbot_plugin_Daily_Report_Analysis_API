@@ -153,7 +153,7 @@ class Summarizer:
                 # ------------------------------------------
 
                 logger.info(
-                    f"DailyReportAnalysisAPI: LLM判定状态={status}, topics_count={len(topics)}, next_start_id={next_start_id}"
+                    f"DailyReportAnalysisAPI: LLM判定状态={status}, topics_count={len(topics)}, 窗口ID范围=[{min_valid_id}-{max_valid_id}], next_start_id={next_start_id}"
                 )
 
                 last_time = datetime.fromtimestamp(
