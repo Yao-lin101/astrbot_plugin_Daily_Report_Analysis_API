@@ -485,23 +485,23 @@ class ActiveMessageHandler:
                 )
 
             # 统一写入对话历史（AstrBot 核心缓存）
-            if self.user_unified_origin and ":" in self.user_unified_origin:
-                parts = self.user_unified_origin.split(":")
-                unified_origin = parts[0]
-                cid = parts[1]
+            if self.user_unified_origin:
                 try:
-                    conv = await self.context.conversation_manager.get_conversation(
-                        unified_origin, cid
-                    )
-                    if conv:
-                        history = json.loads(conv.history)
-                        history.append({"role": "assistant", "content": message_content})
-                        await self.context.conversation_manager.update_conversation(
-                            unified_origin, cid, history=history
+                    # 获取当前会话正在使用的对话 ID
+                    curr_cid = await self.context.conversation_manager.get_curr_conversation_id(self.user_unified_origin)
+                    if curr_cid:
+                        conv = await self.context.conversation_manager.get_conversation(
+                            self.user_unified_origin, curr_cid
                         )
-                        logger.info("ActiveMessageHandler: 已将主动消息写入对话历史。")
+                        if conv:
+                            history = json.loads(conv.history)
+                            history.append({"role": "assistant", "content": message_content})
+                            await self.context.conversation_manager.update_conversation(
+                                self.user_unified_origin, curr_cid, history=history
+                            )
+                            logger.info(f"ActiveMessageHandler: 已将主动消息写入对话历史 (Session: {self.user_unified_origin}, CID: {curr_cid})。")
                 except Exception as e:
-                    logger.error(f"ActiveMessageHandler: 写入对话历史失败: {e}")
+                    logger.error(f"ActiveMessageHandler: 写入对话历史失败: {e}\n{traceback.format_exc()}")
 
             logger.info("ActiveMessageHandler: 主动消息发送成功。")
 
