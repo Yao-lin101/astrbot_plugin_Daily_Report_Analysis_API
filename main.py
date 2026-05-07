@@ -84,7 +84,7 @@ class DailyReportAnalysisAPI(Star):
         self.config = config
         
         # 初始化数据库
-        db_path = os.path.join(self.context.get_data_dir(), "storage.db")
+        db_path = os.path.join(StarTools.get_data_dir(), "storage.db")
         self.db = Storage(db_path)
         
         # 运行时缓存
@@ -95,7 +95,7 @@ class DailyReportAnalysisAPI(Star):
         
         # 自动同步配置到 JSON 文件，供 MCP 服务器读取
         try:
-            config_dir = os.path.join(self.context.get_data_dir(), "config")
+            config_dir = os.path.join(StarTools.get_data_dir(), "config")
             os.makedirs(config_dir, exist_ok=True)
             config_path = os.path.join(config_dir, "astrbot_plugin_Daily_Report_Analysis_API_config.json")
             with open(config_path, "w", encoding="utf-8") as f:
