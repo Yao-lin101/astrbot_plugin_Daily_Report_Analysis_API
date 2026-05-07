@@ -235,7 +235,9 @@ class Summarizer:
 
         # 如果这段记录中没有任何用户发言，则暂不上报（等待用户回复后形成对话再总结）
         if not user_msgs:
-            logger.info("DailyReportAnalysisAPI: 当前私聊记录中无用户消息，跳过本次上报。")
+            logger.info(
+                "DailyReportAnalysisAPI: 当前私聊记录中无用户消息，跳过本次上报。"
+            )
             return False
 
         first_time = datetime.fromtimestamp(messages[0]["timestamp"]).strftime("%H:%M")

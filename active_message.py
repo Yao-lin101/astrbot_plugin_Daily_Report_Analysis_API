@@ -9,8 +9,8 @@ from astrbot.core.star.star_tools import StarTools
 
 from .prompts import (
     ACTIVE_MSG_CHECK_STATUS_PROMPT,
-    ACTIVE_MSG_PREDICT_TIME_PROMPT,
     ACTIVE_MSG_GENERATE_PROMPT,
+    ACTIVE_MSG_PREDICT_TIME_PROMPT,
 )
 
 
@@ -281,7 +281,9 @@ class ActiveMessageHandler:
                 ):
                     try:
                         now = datetime.now()
-                        self.next_check_time = now + timedelta(minutes=int(delay_minutes))
+                        self.next_check_time = now + timedelta(
+                            minutes=int(delay_minutes)
+                        )
                         self.db.update_plugin_meta(
                             "active_msg_next_check_time",
                             self.next_check_time.isoformat(),
@@ -384,7 +386,9 @@ class ActiveMessageHandler:
             current_time=current_time,
             reason=reason,
             memory_data=memory_data,
-            conversation_context=conversation_context if conversation_context else "（暂无最近对话记录）",
+            conversation_context=conversation_context
+            if conversation_context
+            else "（暂无最近对话记录）",
         )
 
         logger.debug(

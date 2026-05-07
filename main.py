@@ -269,7 +269,10 @@ class DailyReportAnalysisAPI(Star):
                 self._get_group_context(group_id)
 
             message_content = await format_full_message(
-                event, self.group_messages_map.get(group_id)
+                self.context,
+                event,
+                self.group_messages_map.get(group_id),
+                self.bot_nicknames,
             )
             is_specific_user = sender_id == specific_user_id
             prefix = "【用户】" if is_specific_user else "【群友】"
@@ -314,7 +317,9 @@ class DailyReportAnalysisAPI(Star):
                     )
         else:
             if sender_id == specific_user_id:
-                message_content = await format_full_message(event)
+                message_content = await format_full_message(
+                    self.context, event, bot_nicknames=self.bot_nicknames
+                )
                 self.db.add_private_message(sender_id, "user", message_content, now)
                 if self.private_timer:
                     self.private_timer.cancel()
