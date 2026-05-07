@@ -48,6 +48,13 @@ class Storage:
                     bot_reply TEXT
                 )
             ''')
+            # 4. 插件全局元数据表 (用于存储主动消息时间等)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS plugin_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            ''')
             conn.commit()
 
     # --- 群组相关操作 ---
@@ -133,3 +140,18 @@ class Storage:
             rows = [dict(row) for row in cursor.fetchall()]
             rows.reverse()
             return rows
+
+    # --- 全局配置相关操作 ---
+
+    def get_plugin_meta(self, key, default=None):
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT value FROM plugin_meta WHERE key = ?', (key,))
+            row = cursor.fetchone()
+            return row[0] if row else default
+
+    def update_plugin_meta(self, key, value):
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('INSERT OR REPLACE INTO plugin_meta (key, value) VALUES (?, ?)', (key, str(value)))
+            conn.commit()

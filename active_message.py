@@ -50,11 +50,35 @@ class ActiveMessageHandler:
         self.plugin = plugin
         self.context = plugin.context
         self.api_service = plugin.api_service
+        self.db = plugin.db
         self.loop_task = None
-        self.next_check_time = datetime.now() + timedelta(minutes=1)
-        self.messages_sent_today = 0
-        self.last_reset_date = datetime.now().date()
-        self.user_unified_origin = None
+        
+        # 从数据库恢复状态
+        try:
+            next_check_str = self.db.get_plugin_meta("active_msg_next_check_time")
+            self.next_check_time = datetime.fromisoformat(next_check_str) if next_check_str else datetime.now() + timedelta(minutes=1)
+            
+            self.messages_sent_today = int(self.db.get_plugin_meta("active_msg_sent_today", 0))
+            
+            last_reset_str = self.db.get_plugin_meta("active_msg_last_reset_date")
+            self.last_reset_date = datetime.strptime(last_reset_str, "%Y-%m-%d").date() if last_reset_str else datetime.now().date()
+            
+            self._user_unified_origin = self.db.get_plugin_meta("active_msg_user_origin")
+        except Exception as e:
+            logger.error(f"ActiveMessageHandler: 恢复状态失败: {e}")
+            self.next_check_time = datetime.now() + timedelta(minutes=1)
+            self.messages_sent_today = 0
+            self.last_reset_date = datetime.now().date()
+            self._user_unified_origin = None
+
+    @property
+    def user_unified_origin(self):
+        return self._user_unified_origin
+
+    @user_unified_origin.setter
+    def user_unified_origin(self, value):
+        self._user_unified_origin = value
+        self.db.update_plugin_meta("active_msg_user_origin", value)
 
     def start(self):
         if self.loop_task:
@@ -83,10 +107,13 @@ class ActiveMessageHandler:
                 if now.date() > self.last_reset_date:
                     self.messages_sent_today = 0
                     self.last_reset_date = now.date()
+                    self.db.update_plugin_meta("active_msg_sent_today", 0)
+                    self.db.update_plugin_meta("active_msg_last_reset_date", self.last_reset_date.isoformat())
 
                 if self.messages_sent_today >= max_msgs:
                     next_day = now + timedelta(days=1)
                     self.next_check_time = next_day.replace(hour=0, minute=0, second=0, microsecond=0)
+                    self.db.update_plugin_meta("active_msg_next_check_time", self.next_check_time.isoformat())
 
                 if now >= self.next_check_time:
                     sent = False
@@ -94,6 +121,7 @@ class ActiveMessageHandler:
                         sent = await self._check_and_action()
                         if sent:
                             self.messages_sent_today += 1
+                            self.db.update_plugin_meta("active_msg_sent_today", self.messages_sent_today)
                             logger.info(f"ActiveMessageHandler: 今日已发送主动消息 {self.messages_sent_today}/{max_msgs} 条")
                     
                     if sent:
@@ -118,6 +146,10 @@ class ActiveMessageHandler:
         max_interval = max_int if max_int is not None else config.get("active_msg_max_interval", 60)
         offset_minutes = random.randint(min_interval, max_interval)
         self.next_check_time = datetime.now() + timedelta(minutes=offset_minutes)
+        
+        # 持久化
+        self.db.update_plugin_meta("active_msg_next_check_time", self.next_check_time.isoformat())
+        
         logger.info(f"ActiveMessageHandler: 收到{reason}，已重置主动消息轮询时间至 {self.next_check_time} ({offset_minutes}分钟后)")
 
     async def _get_system_prompt(self):
