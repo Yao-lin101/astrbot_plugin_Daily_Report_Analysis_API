@@ -233,7 +233,12 @@ class DailyReportAnalysisAPI(Star):
         sender_id = str(event.get_sender_id())
         specific_user_id = str(self.config.get("specific_user_id", ""))
 
-        if specific_user_id and sender_id == specific_user_id:
+        # 仅当用户发起私聊互动时，才重置主动消息的轮询计时器
+        if (
+            specific_user_id
+            and sender_id == specific_user_id
+            and not event.message_obj.group_id
+        ):
             if self.active_message_handler:
                 self.active_message_handler.reset_polling(
                     min_int=60, max_int=120, reason="用户互动"

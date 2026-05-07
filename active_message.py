@@ -395,7 +395,7 @@ class ActiveMessageHandler:
 
 请直接输出你要发送的消息内容，不要有任何 Markdown 包裹或附加的说明文字。"""
 
-        logger.info(
+        logger.debug(
             f"ActiveMessageHandler: 准备发送给大模型的生成提示词：\n{gen_prompt}"
         )
 
