@@ -363,9 +363,15 @@ class ActiveMessageHandler:
 
                 chain = MessageChain().message(message_content)
                 # 优先使用实时探测到的来源，否则保底使用特定平台
-                target_platform = "aiocqhttp"
+                # 平台兼容性处理
+                target_platform = "aiocqhttp" # 默认保底
                 if self.user_unified_origin and ":" in self.user_unified_origin:
-                    target_platform = self.user_unified_origin.split(":")[0]
+                    raw_platform = self.user_unified_origin.split(":")[0]
+                    # 针对 Arisu 等适配器名称进行转换
+                    if raw_platform.lower() in ["arisu", "onebot", "gocq"]:
+                        target_platform = "aiocqhttp"
+                    else:
+                        target_platform = raw_platform
 
                 await StarTools.send_message_by_id(
                     type="FriendMessage",
