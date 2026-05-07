@@ -348,19 +348,18 @@ class DailyReportAnalysisAPI(Star):
             yield event.plain_result(self._get_resp("resp_permission_denied"))
             return
 
-        if not self.private_messages:
-            yield event.plain_result("当前没有待上报的私聊记录。")
-            return
-
-        yield event.plain_result("开始强制总结并上报私聊记录...")
+        yield event.plain_result("正在检查并尝试上报私聊记录...")
 
         try:
             if self.private_timer:
                 self.private_timer.cancel()
                 self.private_timer = None
 
-            await self._summarize_private_messages()
-            yield event.plain_result(self._get_resp("resp_summary_success"))
+            success = await self._summarize_private_messages()
+            if success:
+                yield event.plain_result("私聊总结与上报完成！")
+            else:
+                yield event.plain_result("当前没有待上报的新私聊记录。")
         except Exception as e:
             logger.error(f"DailyReportAnalysisAPI: 手动私聊上报失败: {e}")
             yield event.plain_result(f"私聊上报失败: {str(e)}")
@@ -913,7 +912,7 @@ class DailyReportAnalysisAPI(Star):
     async def _summarize_private_messages(self):
         specific_user_id = str(self.config.get("specific_user_id", ""))
         if not specific_user_id:
-            return
+            return False
 
         # 1. 获取上一次总结的最后一条消息 ID
         last_id_str = self.db.get_plugin_meta("last_private_summarized_id", "0")
@@ -922,7 +921,7 @@ class DailyReportAnalysisAPI(Star):
         # 2. 从数据库获取自上次以来的新私聊记录
         messages = self.db.get_pending_private_messages(specific_user_id, last_id, limit=50)
         if not messages:
-            return
+            return False
             
         # 组装对话文本用于 LLM
         dialogue_text = ""
@@ -1019,5 +1018,7 @@ class DailyReportAnalysisAPI(Star):
             self.db.update_plugin_meta("last_private_summarized_id", new_last_id)
             
             logger.info(f"DailyReportAnalysisAPI: 私聊总结已成功上报，当前进度 ID={new_last_id}。")
+            return True
         except Exception as e:
             logger.error(f"DailyReportAnalysisAPI: 私聊总结上报失败: {e}")
+            return False
