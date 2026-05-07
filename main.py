@@ -769,6 +769,24 @@ class DailyReportAnalysisAPI(Star):
                 topics = result_json.get("topics", [])
                 next_start_id = result_json.get("next_start_id", to_summarize[-1]["id"])
 
+                # --- 安全检查：防止 LLM 幻觉导致 ID 越界 ---
+                max_valid_id = to_summarize[-1]["id"]
+                min_valid_id = to_summarize[0]["id"]
+                
+                if not isinstance(next_start_id, int):
+                    try:
+                        next_start_id = int(next_start_id)
+                    except:
+                        next_start_id = max_valid_id
+                
+                if next_start_id > max_valid_id:
+                    logger.warning(f"DailyReportAnalysisAPI: LLM 返回的 ID {next_start_id} 超过上限 {max_valid_id}，已修正。")
+                    next_start_id = max_valid_id
+                elif next_start_id < min_valid_id:
+                    logger.warning(f"DailyReportAnalysisAPI: LLM 返回的 ID {next_start_id} 低于下限 {min_valid_id}，已修正。")
+                    next_start_id = max_valid_id # 默认移动到末尾，防止死循环
+                # ------------------------------------------
+
                 logger.info(
                     f"DailyReportAnalysisAPI: LLM判定状态={status}, topics_count={len(topics)}, next_start_id={next_start_id}"
                 )
