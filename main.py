@@ -3,7 +3,8 @@ import inspect
 import json
 import os
 from collections import defaultdict, deque
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+from .storage import Storage
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -80,8 +81,14 @@ class DailyReportAnalysisAPI(Star):
         self.active_groups = set()
 
         self.private_timer = None
-        self.private_messages = []
         self.config = config
+        
+        # 初始化数据库
+        db_path = os.path.join(self.context.get_data_dir(), "storage.db")
+        self.db = Storage(db_path)
+        
+        # 运行时缓存
+        self.private_messages = []
         self.internal_commands = []
         self.api_service = None
         self.active_message_handler = None
@@ -97,55 +104,21 @@ class DailyReportAnalysisAPI(Star):
         except Exception as e:
             logger.error(f"DailyReportAnalysisAPI: 同步配置失败: {e}")
 
-    def _get_data_path(self):
-        return StarTools.get_data_dir() / "data.json"
-
-    def _load_data(self):
-        path = self._get_data_path()
-        if path.exists():
-            try:
-                with open(path, encoding="utf-8") as f:
-                    data = json.load(f)
-                    self.last_summarized_id = defaultdict(
-                        int, data.get("last_summarized_id", {})
-                    )
-                    self.message_id_counter = defaultdict(
-                        int, data.get("message_id_counter", {})
-                    )
-                    self.user_nicknames.update(data.get("user_nicknames", {}))
-                    self.bot_nicknames.update(data.get("bot_nicknames", {}))
-                    self.group_names.update(data.get("group_names", {}))
-                    self.private_messages = data.get("private_messages", [])
-                    # 恢复 messages
-                    saved_messages = data.get("group_messages_map", {})
-                    for gid, msgs in saved_messages.items():
-                        # 兼容旧版本：为没有 id 的消息分配 id
-                        for msg in msgs:
-                            if "id" not in msg:
-                                self.message_id_counter[gid] += 1
-                                msg["id"] = self.message_id_counter[gid]
-                        self.group_messages_map[gid] = deque(msgs, maxlen=500)
-                logger.info(f"DailyReportAnalysisAPI: 已从 {path} 加载持久化数据。")
-            except Exception as e:
-                logger.error(f"DailyReportAnalysisAPI: 加载数据失败: {e}")
+    def _get_group_context(self, group_id):
+        """从数据库恢复群组上下文"""
+        meta = self.db.get_group_meta(group_id)
+        if meta:
+            self.group_names[group_id] = meta[0]
+            self.last_summarized_id[group_id] = meta[1]
+            self.message_id_counter[group_id] = meta[2]
+        else:
+            self.group_names[group_id] = "未知群聊"
+            self.last_summarized_id[group_id] = 0
+            self.message_id_counter[group_id] = 0
 
     def _save_data(self):
-        path = self._get_data_path()
-        os.makedirs(path.parent, exist_ok=True)
-        data = {
-            "last_summarized_id": dict(self.last_summarized_id),
-            "message_id_counter": dict(self.message_id_counter),
-            "user_nicknames": self.user_nicknames,
-            "bot_nicknames": self.bot_nicknames,
-            "group_names": self.group_names,
-            "private_messages": self.private_messages,
-            "group_messages_map": {
-                k: list(v) for k, v in self.group_messages_map.items()
-            },
-        }
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        logger.debug("DailyReportAnalysisAPI: 持久化数据已保存。")
+        """此方法已弃用，数据已实时保存至 SQLite"""
+        pass
 
     def _get_resp(self, key: str, default: str = "", **kwargs) -> str:
         """从配置获取回复模板并格式化"""
@@ -159,8 +132,6 @@ class DailyReportAnalysisAPI(Star):
         """插件初始化"""
         if not self.config:
             self.config = self.context.get_config()
-
-        self._load_data()
 
         if self.private_messages:
             self.private_timer = asyncio.create_task(
@@ -602,6 +573,10 @@ class DailyReportAnalysisAPI(Star):
             group_id = event.message_obj.group_id
             group_name = self._get_group_name(event)
             self.group_events[group_id] = event
+            
+            # 确保计数器和上下文已加载
+            if group_id not in self.message_id_counter:
+                self._get_group_context(group_id)
 
             # 使用增强版解析逻辑保留 At 信息和回复信息
             message_content = await format_full_message(
@@ -619,26 +594,26 @@ class DailyReportAnalysisAPI(Star):
             msg_id = self.message_id_counter[group_id]
 
             msg_content_formatted = f"{prefix}{sender_name}: {message_content}"
-            msg_obj = {
-                "id": msg_id,
-                "platform_msg_id": event.message_obj.message_id,
-                "时间": time_str,
-                "群名称": group_name,
-                "content": msg_content_formatted,
-                "sender_id": sender_id,
-                "timestamp": now,
-            }
+            
+            # 写入数据库
+            self.db.add_group_message(
+                group_id, msg_id, sender_id, sender_name, 
+                msg_content_formatted, now, event.message_obj.message_id
+            )
+            self.db.update_group_meta(group_id, group_name=group_name, message_id_counter=msg_id)
+            
+            # 维护一小段内存缓存用于 format_full_message 解析
+            msg_obj = {"id": msg_id, "content": msg_content_formatted, "sender_id": sender_id}
+            if group_id not in self.group_messages_map:
+                self.group_messages_map[group_id] = deque(maxlen=100)
             self.group_messages_map[group_id].append(msg_obj)
-
-            if msg_id % 20 == 0:
-                self._save_data()
 
             logger.debug(
                 f"DailyReportAnalysisAPI: 记录群聊消息 ID={msg_id} [{group_name}] - {msg_content_formatted}"
             )
 
             if is_specific_user:
-                # 检查是否为实质性发言（包含非空白文字或 At）
+                # 检查是否为实质性发言
                 has_substance = any(
                     (isinstance(comp, Plain) and comp.text.strip())
                     or isinstance(comp, At)
@@ -658,9 +633,8 @@ class DailyReportAnalysisAPI(Star):
             # 私聊记录逻辑
             if sender_id == specific_user_id:
                 message_content = await format_full_message(event)
-                self.private_messages.append(
-                    {"时间": time_str, "用户": message_content, "你的回复": ""}
-                )
+                self.db.add_private_message(sender_id, message_content, now)
+                
                 if self.private_timer:
                     self.private_timer.cancel()
                 self.private_timer = asyncio.create_task(
@@ -681,10 +655,12 @@ class DailyReportAnalysisAPI(Star):
 
     async def _summarize_single_group(self, group_id):
         """对增量消息进行总结，但快照点维持在特定用户最后一次发言"""
-        messages = self.group_messages_map.get(group_id, [])
-        last_id = self.last_summarized_id.get(group_id, 0)
+        if group_id not in self.last_summarized_id:
+            self._get_group_context(group_id)
 
-        pending = [m for m in messages if m["id"] > last_id]
+        last_id = self.last_summarized_id.get(group_id, 0)
+        pending = self.db.get_pending_messages(group_id, last_id, limit=200)
+
         if not pending:
             self.active_groups.discard(group_id)
             return
@@ -695,7 +671,7 @@ class DailyReportAnalysisAPI(Star):
         first_user_msg_index = -1
         last_user_msg_index = -1
         for i in range(len(pending)):
-            if pending[i].get("sender_id") == specific_user_id:
+            if str(pending[i].get("sender_id")) == specific_user_id:
                 if first_user_msg_index == -1:
                     first_user_msg_index = i
                 last_user_msg_index = i
@@ -708,15 +684,11 @@ class DailyReportAnalysisAPI(Star):
         context_start = max(0, first_user_msg_index - 15)
         to_summarize = pending[context_start:]
 
-        # 限制最大长度，防止消息过多导致 LLM 偏离重点（保留最近的 100 条）
-        if len(to_summarize) > 100:
-            to_summarize = to_summarize[-100:]
-
         # 严格连续消息预合并
         merged_messages = []
         for msg in to_summarize:
             if merged_messages and merged_messages[-1]["sender_id"] == msg["sender_id"]:
-                # 连续发送，追加内容，保留第一条消息的 ID
+                # 连续发送，追加内容
                 content_parts = msg["content"].split(": ", 1)
                 text_to_add = (
                     content_parts[-1] if len(content_parts) > 1 else msg["content"]
@@ -731,10 +703,7 @@ class DailyReportAnalysisAPI(Star):
             self.context, event, group_id, self.bot_nicknames
         )
 
-        group_name = to_summarize[0].get("群名称") or self.group_names.get(
-            group_id, "未知群聊"
-        )
-        last_time = to_summarize[-1].get("时间", "未知时间")
+        group_name = self.group_names.get(group_id, "未知群聊")
         dialogue_text = "\n".join(
             [f"[{m['id']}] {m['content']}" for m in merged_messages]
         )
@@ -805,6 +774,10 @@ class DailyReportAnalysisAPI(Star):
                 )
 
                 if status == "COMPLETED" and topics:
+                    # 只有在总结成功且有话题时，才更新进度
+                    self.last_summarized_id[group_id] = next_start_id
+                    self.db.update_group_meta(group_id, last_summarized_id=next_start_id)
+                    
                     for t in topics:
                         topic_str = t.get("topic", "未知话题")
                         content_str = t.get("content", "")
@@ -889,25 +862,27 @@ class DailyReportAnalysisAPI(Star):
                 self.context, event, group_id, self.bot_nicknames
             )
 
+            # 确保计数器已加载
+            if group_id not in self.message_id_counter:
+                self._get_group_context(group_id)
+
             self.message_id_counter[group_id] += 1
             msg_id = self.message_id_counter[group_id]
 
             msg_content_formatted = f"【你】{bot_name}: {reply_text}"
-            msg_obj = {
-                "id": msg_id,
-                "platform_msg_id": event.message_obj.message_id,
-                "时间": time_str,
-                "群名称": group_name,
-                "content": msg_content_formatted,
-                "sender_id": "bot",
-                "timestamp": datetime.now().timestamp(),
-            }
-            self.group_messages_map[group_id].append(msg_obj)
+            
+            # 写入数据库
+            self.db.add_group_message(
+                group_id, msg_id, "bot", bot_name, 
+                msg_content_formatted, datetime.now().timestamp(), event.message_obj.message_id
+            )
+            self.db.update_group_meta(group_id, group_name=group_name, message_id_counter=msg_id)
 
-            if len(self.group_messages_map[group_id]) > 500:
-                self.group_messages_map[group_id] = self.group_messages_map[group_id][
-                    -500:
-                ]
+            # 维护一小段内存缓存用于 format_full_message 解析
+            msg_obj = {"id": msg_id, "content": msg_content_formatted, "sender_id": "bot"}
+            if group_id not in self.group_messages_map:
+                self.group_messages_map[group_id] = deque(maxlen=100)
+            self.group_messages_map[group_id].append(msg_obj)
 
             logger.debug(
                 f"DailyReportAnalysisAPI: 记录机器人回复 ID={msg_id} [{group_name}] - {msg_content_formatted}"
@@ -925,11 +900,19 @@ class DailyReportAnalysisAPI(Star):
             self.private_timer = None
 
     async def _summarize_private_messages(self):
-        if not self.private_messages:
+        specific_user_id = str(self.config.get("specific_user_id", ""))
+        if not specific_user_id:
             return
 
-        to_summarize = list(self.private_messages)
-        self.private_messages.clear()
+        # 从数据库获取最近的私聊记录
+        to_summarize = self.db.get_recent_private_messages(specific_user_id, limit=30)
+        if not to_summarize:
+            return
+            
+        # 查找哪些消息还未标记“你的回复”
+        unreplied_msgs = [m for m in to_summarize if not m.get("你的回复")]
+        if not unreplied_msgs:
+            return
 
         first_time = to_summarize[0].get("时间", datetime.now().strftime("%H:%M"))
 
