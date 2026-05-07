@@ -236,9 +236,11 @@ class DailyReportAnalysisAPI(Star):
         # 当特定用户发言时（无论私聊还是群聊），重置主动消息的轮询计时器并更新活跃状态
         if specific_user_id and sender_id == specific_user_id:
             if self.active_message_handler:
-                # 只有私聊才强制重置 polling，群聊仅记录活跃但不一定重置（或者也可以统一重置）
-                # 这里我们选择统一重置，因为用户活跃说明不需要立即“主动找”
-                self.active_message_handler.reset_polling(reason="用户活跃")
+                # 只有私聊才强制重置 polling（推迟主动找人）。群聊仅更新位置/时间，不推迟计时，
+                # 这样如果用户在群里活跃，主动消息依然可以按原计划触发并发送到群里。
+                if not event.message_obj.group_id or getattr(event, "is_at_or_wake_command", False):
+                    self.active_message_handler.reset_polling(reason="用户活跃(互动)")
+                
                 self.active_message_handler.update_user_activity(
                     group_id=event.message_obj.group_id,
                     unified_origin=event.unified_msg_origin
