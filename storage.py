@@ -33,7 +33,9 @@ class Storage:
                     group_id TEXT PRIMARY KEY,
                     group_name TEXT,
                     last_summarized_id INTEGER DEFAULT 0,
-                    message_id_counter INTEGER DEFAULT 0
+                    message_id_counter INTEGER DEFAULT 0,
+                    user_nickname TEXT,
+                    bot_nickname TEXT
                 )
             ''')
             # 3. 私聊消息表
@@ -53,10 +55,10 @@ class Storage:
     def get_group_meta(self, group_id):
         with self._get_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute('SELECT group_name, last_summarized_id, message_id_counter FROM group_meta WHERE group_id = ?', (group_id,))
+            cursor.execute('SELECT group_name, last_summarized_id, message_id_counter, user_nickname, bot_nickname FROM group_meta WHERE group_id = ?', (group_id,))
             return cursor.fetchone()
 
-    def update_group_meta(self, group_id, group_name=None, last_summarized_id=None, message_id_counter=None):
+    def update_group_meta(self, group_id, group_name=None, last_summarized_id=None, message_id_counter=None, user_nickname=None, bot_nickname=None):
         with self._get_conn() as conn:
             cursor = conn.cursor()
             # 先确保存在
@@ -68,6 +70,10 @@ class Storage:
                 cursor.execute('UPDATE group_meta SET last_summarized_id = ? WHERE group_id = ?', (last_summarized_id, group_id))
             if message_id_counter is not None:
                 cursor.execute('UPDATE group_meta SET message_id_counter = ? WHERE group_id = ?', (message_id_counter, group_id))
+            if user_nickname:
+                cursor.execute('UPDATE group_meta SET user_nickname = ? WHERE group_id = ?', (user_nickname, group_id))
+            if bot_nickname:
+                cursor.execute('UPDATE group_meta SET bot_nickname = ? WHERE group_id = ?', (bot_nickname, group_id))
             conn.commit()
 
     def add_group_message(self, group_id, msg_id, sender_id, sender_name, content, timestamp, platform_msg_id):

@@ -111,10 +111,14 @@ class DailyReportAnalysisAPI(Star):
             self.group_names[group_id] = meta[0]
             self.last_summarized_id[group_id] = meta[1]
             self.message_id_counter[group_id] = meta[2]
+            self.user_nicknames[group_id] = meta[3] or "用户"
+            self.bot_nicknames[group_id] = meta[4] or "机器人"
         else:
             self.group_names[group_id] = "未知群聊"
             self.last_summarized_id[group_id] = 0
             self.message_id_counter[group_id] = 0
+            self.user_nicknames[group_id] = "用户"
+            self.bot_nicknames[group_id] = "机器人"
 
     def _save_data(self):
         """此方法已弃用，数据已实时保存至 SQLite"""
@@ -600,7 +604,13 @@ class DailyReportAnalysisAPI(Star):
                 group_id, msg_id, sender_id, sender_name, 
                 msg_content_formatted, now, event.message_obj.message_id
             )
-            self.db.update_group_meta(group_id, group_name=group_name, message_id_counter=msg_id)
+            
+            # 更新元数据
+            meta_update = {"group_name": group_name, "message_id_counter": msg_id}
+            if is_specific_user:
+                meta_update["user_nickname"] = sender_name
+            
+            self.db.update_group_meta(group_id, **meta_update)
             
             # 维护一小段内存缓存用于 format_full_message 解析
             msg_obj = {"id": msg_id, "content": msg_content_formatted, "sender_id": sender_id}
@@ -894,7 +904,10 @@ class DailyReportAnalysisAPI(Star):
                 group_id, msg_id, "bot", bot_name, 
                 msg_content_formatted, datetime.now().timestamp(), event.message_obj.message_id
             )
-            self.db.update_group_meta(group_id, group_name=group_name, message_id_counter=msg_id)
+            self.db.update_group_meta(group_id, group_name=group_name, message_id_counter=msg_id, bot_nickname=bot_name)
+
+            # 更新内存缓存
+            self.bot_nicknames[group_id] = bot_name
 
             # 维护一小段内存缓存用于 format_full_message 解析
             msg_obj = {"id": msg_id, "content": msg_content_formatted, "sender_id": "bot"}
