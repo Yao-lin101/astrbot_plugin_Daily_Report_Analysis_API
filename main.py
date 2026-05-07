@@ -298,7 +298,12 @@ class DailyReportAnalysisAPI(Star):
             self.db.update_group_meta(group_id, **meta_update)
 
             self.group_messages_map[group_id].append(
-                {"id": msg_id, "content": msg_content_formatted, "sender_id": sender_id}
+                {
+                    "id": msg_id,
+                    "content": msg_content_formatted,
+                    "sender_id": sender_id,
+                    "platform_msg_id": event.message_obj.message_id,
+                }
             )
 
             if is_specific_user:
@@ -332,7 +337,13 @@ class DailyReportAnalysisAPI(Star):
         result = event.get_result()
         if not result or not result.is_model_result():
             return
-        reply_text = result.get_plain_text()
+        reply_text = await format_full_message(
+            self.context,
+            event,
+            self.group_messages_map.get(event.message_obj.group_id),
+            self.bot_nicknames,
+            message_chain=result.chain,
+        )
         if not reply_text:
             return
 
@@ -374,7 +385,12 @@ class DailyReportAnalysisAPI(Star):
                 bot_nickname=bot_name,
             )
             self.group_messages_map[group_id].append(
-                {"id": msg_id, "content": msg_content_formatted, "sender_id": "bot"}
+                {
+                    "id": msg_id,
+                    "content": msg_content_formatted,
+                    "sender_id": "bot",
+                    "platform_msg_id": event.message_obj.message_id,
+                }
             )
 
     async def _delay_summarize_task(self, group_id, delay):

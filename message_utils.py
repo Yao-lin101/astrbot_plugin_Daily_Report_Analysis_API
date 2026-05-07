@@ -55,12 +55,15 @@ async def format_full_message(
     event: AstrMessageEvent,
     group_messages: list = None,
     bot_nicknames: dict = None,
+    message_chain: list = None,
 ) -> str:
     """解析消息组件，保留并转化 At 信息为文本格式，同时保留图片等媒体占位符，支持引用回复解析"""
     full_content = ""
     group_id = event.message_obj.group_id
 
-    for comp in event.message_obj.message:
+    chain = message_chain if message_chain is not None else event.message_obj.message
+
+    for comp in chain:
         if isinstance(comp, Plain):
             full_content += comp.text
         elif isinstance(comp, At):
