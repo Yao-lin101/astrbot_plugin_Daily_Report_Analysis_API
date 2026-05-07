@@ -338,15 +338,23 @@ class DailyReportAnalysisAPI(Star):
         if not result or not result.is_model_result():
             return
         group_id = event.message_obj.group_id
-        logger.info(
-            f"DailyReportAnalysisAPI: 正在处理 bot 回复. group_id: {group_id}, result.chain: {result.chain}"
-        )
+
+        # 复制消息链并尝试补全被 RespondStage 剥离的 Reply/At 组件
+        chain = result.chain[:]
+        platform_settings = self.context.astrbot_config.get("platform_settings", {})
+        if (
+            result.is_model_result()
+            and platform_settings.get("reply_with_quote")
+            and not any(isinstance(c, Reply) for c in chain)
+        ):
+            chain.insert(0, Reply(id=event.message_obj.message_id))
+
         reply_text = await format_full_message(
             self.context,
             event,
             self.group_messages_map.get(group_id),
             self.bot_nicknames,
-            message_chain=result.chain,
+            message_chain=chain,
         )
         if not reply_text:
             return

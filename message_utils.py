@@ -1,6 +1,5 @@
 import re
 
-from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import At, Face, Image, Plain, Reply, Video
 
@@ -65,7 +64,6 @@ async def format_full_message(
     chain = message_chain if message_chain is not None else event.message_obj.message
 
     for comp in chain:
-        logger.info(f"DailyReportAnalysisAPI: 正在解析组件: {type(comp).__name__}")
         if isinstance(comp, Plain):
             full_content += comp.text
         elif isinstance(comp, At):
@@ -87,20 +85,12 @@ async def format_full_message(
         elif isinstance(comp, Reply):
             # 引用回复处理
             target_id = getattr(comp, "message_id", getattr(comp, "id", None))
-            logger.info(
-                f"DailyReportAnalysisAPI: 处理 Reply 组件, target_id: {target_id}, group_messages 长度: {len(group_messages) if group_messages else 0}"
-            )
             found_text = None
             if target_id and group_messages:
                 # 尝试从历史记录中寻找被引用的内容
-                all_ids = [str(m.get("platform_msg_id")) for m in group_messages]
-                logger.info(f"DailyReportAnalysisAPI: 缓存中的 ID 列表: {all_ids}")
                 for m in reversed(group_messages):
                     curr_platform_id = str(m.get("platform_msg_id"))
                     if curr_platform_id == str(target_id):
-                        logger.info(
-                            f"DailyReportAnalysisAPI: 找到被引用消息, platform_msg_id: {target_id}"
-                        )
                         content = m.get("content", "")
                         # 尝试从格式化的内容中提取 发言人 和 实际内容
                         # content 格式通常为 "【群友/用户/你】名字: 内容"
