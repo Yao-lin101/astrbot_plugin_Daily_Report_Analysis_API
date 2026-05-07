@@ -55,15 +55,12 @@ async def format_full_message(
     event: AstrMessageEvent,
     group_messages: list = None,
     bot_nicknames: dict = None,
-    message_chain: list = None,
 ) -> str:
     """解析消息组件，保留并转化 At 信息为文本格式，同时保留图片等媒体占位符，支持引用回复解析"""
     full_content = ""
     group_id = event.message_obj.group_id
 
-    chain = message_chain if message_chain is not None else event.message_obj.message
-
-    for comp in chain:
+    for comp in event.message_obj.message:
         if isinstance(comp, Plain):
             full_content += comp.text
         elif isinstance(comp, At):
@@ -89,8 +86,7 @@ async def format_full_message(
             if target_id and group_messages:
                 # 尝试从历史记录中寻找被引用的内容
                 for m in reversed(group_messages):
-                    curr_platform_id = str(m.get("platform_msg_id"))
-                    if curr_platform_id == str(target_id):
+                    if str(m.get("platform_msg_id")) == str(target_id):
                         content = m.get("content", "")
                         # 尝试从格式化的内容中提取 发言人 和 实际内容
                         # content 格式通常为 "【群友/用户/你】名字: 内容"

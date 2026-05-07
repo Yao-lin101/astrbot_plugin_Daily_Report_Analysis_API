@@ -298,12 +298,7 @@ class DailyReportAnalysisAPI(Star):
             self.db.update_group_meta(group_id, **meta_update)
 
             self.group_messages_map[group_id].append(
-                {
-                    "id": msg_id,
-                    "content": msg_content_formatted,
-                    "sender_id": sender_id,
-                    "platform_msg_id": event.message_obj.message_id,
-                }
+                {"id": msg_id, "content": msg_content_formatted, "sender_id": sender_id}
             )
 
             if is_specific_user:
@@ -337,25 +332,7 @@ class DailyReportAnalysisAPI(Star):
         result = event.get_result()
         if not result or not result.is_model_result():
             return
-        group_id = event.message_obj.group_id
-
-        # 复制消息链并尝试补全被 RespondStage 剥离的 Reply/At 组件
-        chain = result.chain[:]
-        platform_settings = self.context.get_config().get("platform_settings", {})
-        if (
-            result.is_model_result()
-            and platform_settings.get("reply_with_quote")
-            and not any(isinstance(c, Reply) for c in chain)
-        ):
-            chain.insert(0, Reply(id=event.message_obj.message_id))
-
-        reply_text = await format_full_message(
-            self.context,
-            event,
-            self.group_messages_map.get(group_id),
-            self.bot_nicknames,
-            message_chain=chain,
-        )
+        reply_text = result.get_plain_text()
         if not reply_text:
             return
 
@@ -397,12 +374,7 @@ class DailyReportAnalysisAPI(Star):
                 bot_nickname=bot_name,
             )
             self.group_messages_map[group_id].append(
-                {
-                    "id": msg_id,
-                    "content": msg_content_formatted,
-                    "sender_id": "bot",
-                    "platform_msg_id": event.message_obj.message_id,
-                }
+                {"id": msg_id, "content": msg_content_formatted, "sender_id": "bot"}
             )
 
     async def _delay_summarize_task(self, group_id, delay):
