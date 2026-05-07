@@ -262,7 +262,7 @@ class DailyReportAnalysisAPI(Star):
             group_name = self._get_group_name(event)
             self.group_events[group_id] = event
 
-            if group_id not in self.message_id_counter:
+            if group_id not in self.last_summarized_id:
                 self._get_group_context(group_id)
 
             message_content = await format_full_message(

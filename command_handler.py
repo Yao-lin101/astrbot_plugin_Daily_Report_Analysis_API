@@ -160,13 +160,16 @@ class CommandHandler:
             yield event.plain_result(self._get_resp("resp_group_only"))
             return
 
-        messages = self.plugin.group_messages_map.get(group_id, [])
+        # 优化：直接从数据库获取待总结的消息，不再仅依赖内存缓存
+        if group_id not in self.plugin.last_summarized_id:
+            self.plugin._get_group_context(group_id)
+
         last_id = self.plugin.last_summarized_id.get(group_id, 0)
-        pending_messages = [m for m in messages if m["id"] > last_id]
+        pending_messages = self.db.get_pending_messages(group_id, last_id, limit=200)
 
         specific_user_id = str(self.config.get("specific_user_id", ""))
         has_specific_user = any(
-            m["sender_id"] == specific_user_id for m in pending_messages
+            str(m.get("sender_id")) == specific_user_id for m in pending_messages
         )
 
         if not has_specific_user:
@@ -199,7 +202,10 @@ class CommandHandler:
             yield event.plain_result(self._get_resp("resp_group_only"))
             return
 
+        # 重置内存和数据库中的总结进度
         self.plugin.last_summarized_id[group_id] = 0
+        self.db.update_group_meta(group_id, last_summarized_id=0)
+
         self.plugin.active_groups.add(group_id)
 
         if group_id in self.plugin.group_timers:
@@ -235,9 +241,17 @@ class CommandHandler:
             yield event.plain_result("主动消息机制未初始化。")
             return
 
-        self.plugin.active_message_handler.messages_sent_today = 0
-        self.plugin.active_message_handler.last_reset_date = datetime.now().date()
-        yield event.plain_result("今日主动消息发送计数已重置为 0。")
+        # 同步重置内存与数据库中的计数
+        handler = self.plugin.active_message_handler
+        handler.messages_sent_today = 0
+        handler.last_reset_date = datetime.now().date()
+
+        self.db.update_plugin_meta("active_msg_sent_today", 0)
+        self.db.update_plugin_meta(
+            "active_msg_last_reset_date", handler.last_reset_date.isoformat()
+        )
+
+        yield event.plain_result("今日主动消息发送计数已重置为 0（已同步至数据库）。")
 
     async def test_force_care(
         self,
