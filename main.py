@@ -169,31 +169,37 @@ class DailyReportAnalysisAPI(Star):
 
     @filter.command("stillalive日报")
     async def get_stillalive_report(self, event: AstrMessageEvent, date: str = None):
+        """获取并发送指定日期的日报图片。格式: stillalive日报 [YYYY-MM-DD]"""
         async for res in self.cmd_handler.get_stillalive_report(event, date):
             yield res
 
     @filter.command("stillalive私聊上报")
     async def force_private_summary(self, event: AstrMessageEvent):
+        """手动强制触发私聊记录的总结与上报"""
         async for res in self.cmd_handler.force_private_summary(event):
             yield res
 
     @filter.command("stillalive群总结")
     async def manual_group_summary(self, event: AstrMessageEvent):
+        """手动触发当前群聊的总结"""
         async for res in self.cmd_handler.manual_group_summary(event):
             yield res
 
     @filter.command("stillalive清理缓存")
     async def clear_cache(self, event: AstrMessageEvent):
+        """手动重置总结进度"""
         async for res in self.cmd_handler.clear_cache(event):
             yield res
 
     @filter.command("stillalive状态观望")
     async def test_check_status(self, event: AstrMessageEvent):
+        """测试指令：根据当前状态判断是否需要发消息或继续观望"""
         async for res in self.cmd_handler.test_check_status(event):
             yield res
 
     @filter.command("stillalive重置主动消息计数")
     async def reset_active_msg_count(self, event: AstrMessageEvent):
+        """测试指令：重置今日主动发消息的计数"""
         async for res in self.cmd_handler.reset_active_msg_count(event):
             yield res
 
@@ -204,6 +210,7 @@ class DailyReportAnalysisAPI(Star):
         message_type: str = "care",
         reason: str = "强制触发主动消息",
     ):
+        """测试指令：直接生成并发送主动关怀消息"""
         async for res in self.cmd_handler.test_force_care(event, message_type, reason):
             yield res
 
@@ -211,6 +218,7 @@ class DailyReportAnalysisAPI(Star):
     async def add_group_whitelist(
         self, event: AstrMessageEvent, group_id: str | None = None
     ):
+        """添加群聊白名单"""
         async for res in self.cmd_handler.add_group_whitelist(event, group_id):
             yield res
 
@@ -218,11 +226,13 @@ class DailyReportAnalysisAPI(Star):
     async def remove_group_whitelist(
         self, event: AstrMessageEvent, group_id: str | None = None
     ):
+        """移除群聊白名单"""
         async for res in self.cmd_handler.remove_group_whitelist(event, group_id):
             yield res
 
     @filter.command("stillalive白名单列表")
     async def list_group_whitelist(self, event: AstrMessageEvent):
+        """查看群聊白名单"""
         async for res in self.cmd_handler.list_group_whitelist(event):
             yield res
 
