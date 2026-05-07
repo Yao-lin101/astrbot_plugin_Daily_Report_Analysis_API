@@ -1,6 +1,7 @@
 import asyncio
 import json
 import random
+import re
 import traceback
 from datetime import datetime, timedelta
 
@@ -45,6 +46,9 @@ class ActiveMessageHandler:
             self._user_unified_origin = self.db.get_plugin_meta(
                 "active_msg_user_origin"
             )
+            # 记录用户最后活跃的群聊及时间 (内存变量即可，因为主要用于 5 分钟内的即时判断)
+            self.last_active_group_id = None
+            self.last_active_time = 0
         except Exception as e:
             logger.error(f"ActiveMessageHandler: 恢复状态失败: {e}")
             self.next_check_time = datetime.now() + timedelta(minutes=1)
@@ -155,6 +159,13 @@ class ActiveMessageHandler:
         logger.info(
             f"ActiveMessageHandler: 收到{reason}，已重置主动消息轮询时间至 {self.next_check_time} ({offset_minutes}分钟后)"
         )
+
+    def update_user_activity(self, group_id=None, unified_origin=None):
+        """更新用户的最后活跃记录"""
+        self.last_active_time = datetime.now().timestamp()
+        self.last_active_group_id = group_id
+        if unified_origin:
+            self.user_unified_origin = unified_origin
 
     async def _get_system_prompt(self):
         config = self.plugin.config or {}
@@ -306,8 +317,6 @@ class ActiveMessageHandler:
 
     def _clean_message_content(self, content):
         """清洗消息内容，去除 think 块、system_reminder 和 JSON 结构"""
-        import re
-
         if isinstance(content, list):
             # 处理 AstrBot 的组件化消息格式
             text_parts = []
@@ -332,14 +341,15 @@ class ActiveMessageHandler:
 
         return content.strip()
 
-    async def _get_recent_conversation_context(self, limit: int = 10) -> str:
-        """获取最近的私聊对话上下文并格式化为字符串"""
+    async def _get_recent_conversation_context(self, limit: int = 15) -> str:
+        """获取最近的合并对话上下文（私聊+群聊中与用户的互动）并格式化为字符串"""
         specific_user_id = self.plugin.config.get("specific_user_id")
         if not specific_user_id:
             return "（暂无最近对话记录）"
 
         try:
-            messages = self.db.get_recent_private_messages(
+            # 使用合并后的记录
+            messages = self.db.get_recent_combined_messages(
                 str(specific_user_id), limit=limit
             )
             if not messages:
@@ -348,17 +358,21 @@ class ActiveMessageHandler:
             context_lines = []
             for m in messages:
                 role_label = "用户" if m["role"] == "user" else "你"
-                # 增加时间标注 (MM-DD HH:MM)
                 ts = m.get("timestamp")
                 time_prefix = ""
                 if ts:
                     time_prefix = (
                         f"[{datetime.fromtimestamp(ts).strftime('%m-%d %H:%M')}] "
                     )
-                context_lines.append(f"{time_prefix}{role_label}: {m['content']}")
+                
+                content = m["content"]
+                # 统一格式：去除可能存在的 【用户】Nickname: 或 【你】Nickname: 前缀，实现合并后无额外标注
+                # 这样无论是私聊还是群聊，在上下文中都呈现为 "用户: ..." 或 "你: ..."
+                clean_content = re.sub(r"^【.*?】.*?: ", "", content)
+                context_lines.append(f"{time_prefix}{role_label}: {clean_content}")
             return "\n".join(context_lines)
         except Exception as e:
-            logger.error(f"ActiveMessageHandler: 从数据库获取对话上下文失败: {e}")
+            logger.error(f"ActiveMessageHandler: 获取合并上下文失败: {e}\n{traceback.format_exc()}")
             return "（暂无最近对话记录）"
 
     async def _generate_and_send_message(
@@ -374,26 +388,29 @@ class ActiveMessageHandler:
             else:
                 memory_data = hybrid_res["prompt"]
         else:
-            # 关怀类直接使用短时记忆
             memory_data = short_data
+        
         system_prompt = await self._get_system_prompt()
-
-        # 获取最近的私聊对话上下文
-        conversation_context = await self._get_recent_conversation_context(limit=10)
-
+        conversation_context = await self._get_recent_conversation_context(limit=15)
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # 判断发送频道：如果 5 分钟内在群里活跃过，则发到群里并 @
+        now_ts = datetime.now().timestamp()
+        use_group = False
+        target_group_id = None
+        if self.last_active_group_id and (now_ts - self.last_active_time < 300):
+            use_group = True
+            target_group_id = self.last_active_group_id
+
         gen_prompt = ACTIVE_MSG_GENERATE_PROMPT.format(
             current_time=current_time,
             reason=reason,
             memory_data=memory_data,
-            conversation_context=conversation_context
-            if conversation_context
-            else "（暂无最近对话记录）",
+            conversation_context=conversation_context if conversation_context else "（暂无最近对话记录）",
         )
-
-        logger.debug(
-            f"ActiveMessageHandler: 准备发送给大模型的生成提示词：\n{gen_prompt}"
-        )
+        
+        if use_group:
+            gen_prompt += f"\n\n注意：这条消息将发送到群聊（{target_group_id}）并 @ 用户，请以此氛围回复。"
 
         provider_id = self.plugin.config.get("summary_provider_id")
         response = await self.context.llm_generate(
@@ -406,34 +423,60 @@ class ActiveMessageHandler:
         if not message_content:
             return
 
-        logger.info(f"ActiveMessageHandler: 生成主动消息：{message_content}")
+        logger.info(f"ActiveMessageHandler: 生成主动消息：{message_content} (频道: {'群聊' if use_group else '私聊'})")
 
-        # 发送消息
         specific_user_id = self.plugin.config.get("specific_user_id")
-        if specific_user_id:
-            try:
-                from astrbot.core.message.message_event_result import MessageChain
+        if not specific_user_id: return
 
+        try:
+            from astrbot.api.message_components import At, Plain
+            from astrbot.core.message.message_event_result import MessageChain
+
+            # 平台兼容性处理
+            target_platform = "aiocqhttp"
+            if self.user_unified_origin and ":" in self.user_unified_origin:
+                raw_platform = self.user_unified_origin.split(":")[0]
+                if raw_platform.lower() in ["arisu", "onebot", "gocq"]:
+                    target_platform = "aiocqhttp"
+                else:
+                    target_platform = raw_platform
+
+            if use_group:
+                chain = MessageChain().chain([At(specific_user_id), Plain(f" {message_content}")])
+                await StarTools.send_message_by_id(
+                    type="GroupMessage",
+                    id=target_group_id,
+                    message_chain=chain,
+                    platform=target_platform,
+                )
+                
+                # 记录到群消息数据库
+                group_meta = self.db.get_group_meta(target_group_id)
+                bot_name = (group_meta[4] if group_meta and len(group_meta) > 4 else "机器人") or "机器人"
+                msg_content_formatted = f"【你】{bot_name}: {message_content}"
+                
+                new_msg_id = (group_meta[2] if group_meta else 0) + 1
+                
+                self.db.add_group_message(
+                    target_group_id,
+                    new_msg_id,
+                    "bot",
+                    bot_name,
+                    msg_content_formatted,
+                    datetime.now().timestamp(),
+                    "active_msg_" + str(int(datetime.now().timestamp())),
+                    is_specific_user=True
+                )
+                self.db.update_group_meta(target_group_id, message_id_counter=new_msg_id)
+            else:
                 chain = MessageChain().message(message_content)
-                # 优先使用实时探测到的来源，否则保底使用特定平台
-                # 平台兼容性处理
-                target_platform = "aiocqhttp"  # 默认保底
-                if self.user_unified_origin and ":" in self.user_unified_origin:
-                    raw_platform = self.user_unified_origin.split(":")[0]
-                    # 针对 Arisu 等适配器名称进行转换
-                    if raw_platform.lower() in ["arisu", "onebot", "gocq"]:
-                        target_platform = "aiocqhttp"
-                    else:
-                        target_platform = raw_platform
-
                 await StarTools.send_message_by_id(
                     type="FriendMessage",
                     id=specific_user_id,
                     message_chain=chain,
                     platform=target_platform,
                 )
-
-                # 记录到数据库
+                # 记录到私聊数据库
                 self.db.add_private_message(
                     str(specific_user_id),
                     "bot",
@@ -441,35 +484,26 @@ class ActiveMessageHandler:
                     datetime.now().timestamp(),
                 )
 
-                logger.info(
-                    "ActiveMessageHandler: 成功发送主动关心消息并记录至数据库。"
-                )
-                logger.info("ActiveMessageHandler: 主动消息发送成功。")
-
-                # 记录到对话历史中
-                if self.user_unified_origin and ":" in self.user_unified_origin:
-                    parts = self.user_unified_origin.split(":")
-                    unified_origin = parts[0]
-                    cid = parts[1]
-                    try:
-                        conv = await self.context.conversation_manager.get_conversation(
-                            unified_origin, cid
+            # 统一写入对话历史（AstrBot 核心缓存）
+            if self.user_unified_origin and ":" in self.user_unified_origin:
+                parts = self.user_unified_origin.split(":")
+                unified_origin = parts[0]
+                cid = parts[1]
+                try:
+                    conv = await self.context.conversation_manager.get_conversation(
+                        unified_origin, cid
+                    )
+                    if conv:
+                        history = json.loads(conv.history)
+                        history.append({"role": "assistant", "content": message_content})
+                        await self.context.conversation_manager.update_conversation(
+                            unified_origin, cid, history=history
                         )
-                        if conv:
-                            history = json.loads(conv.history)
-                            history.append(
-                                {"role": "assistant", "content": message_content}
-                            )
-                            await self.context.conversation_manager.update_conversation(
-                                unified_origin, cid, history=history
-                            )
-                            logger.info(
-                                "ActiveMessageHandler: 已将主动消息写入对话历史。"
-                            )
-                    except Exception as e:
-                        logger.error(f"ActiveMessageHandler: 写入对话历史失败: {e}")
+                        logger.info("ActiveMessageHandler: 已将主动消息写入对话历史。")
+                except Exception as e:
+                    logger.error(f"ActiveMessageHandler: 写入对话历史失败: {e}")
 
-            except Exception as e:
-                logger.error(
-                    f"ActiveMessageHandler: 发送主动消息失败：{e}\n{traceback.format_exc()}"
-                )
+            logger.info("ActiveMessageHandler: 主动消息发送成功。")
+
+        except Exception as e:
+            logger.error(f"ActiveMessageHandler: 发送主动消息失败：{e}\n{traceback.format_exc()}")

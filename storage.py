@@ -279,6 +279,30 @@ class Storage:
             cursor.execute("DELETE FROM private_messages WHERE user_id = ?", (user_id,))
             conn.commit()
 
+    def get_recent_combined_messages(self, user_id, limit=20):
+        """获取最近的合并记录流 (包含私聊和特定用户在群聊中的互动)"""
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            # 合并私聊和群聊中涉及特定用户的消息
+            # 对于群聊，我们需要统一格式：【用户】name: content 或 【你】name: content
+            # 注意：group_messages 里的 content 已经是格式化好的了，如 "【用户】e.e.: ..."
+            query = """
+                SELECT role, content, timestamp FROM (
+                    SELECT role, content, timestamp FROM private_messages WHERE user_id = ?
+                    UNION ALL
+                    SELECT (CASE WHEN sender_id = 'bot' THEN 'bot' ELSE 'user' END) as role, content, timestamp 
+                    FROM group_messages 
+                    WHERE is_specific_user = 1
+                )
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """
+            cursor.execute(query, (user_id, limit))
+            rows = [dict(row) for row in cursor.fetchall()]
+            rows.reverse()
+            return rows
+
     # --- 全局配置相关操作 ---
 
     def get_plugin_meta(self, key, default=None):
