@@ -337,10 +337,14 @@ class DailyReportAnalysisAPI(Star):
         result = event.get_result()
         if not result or not result.is_model_result():
             return
+        group_id = event.message_obj.group_id
+        logger.info(
+            f"DailyReportAnalysisAPI: 正在处理 bot 回复. group_id: {group_id}, result.chain: {result.chain}"
+        )
         reply_text = await format_full_message(
             self.context,
             event,
-            self.group_messages_map.get(event.message_obj.group_id),
+            self.group_messages_map.get(group_id),
             self.bot_nicknames,
             message_chain=result.chain,
         )
