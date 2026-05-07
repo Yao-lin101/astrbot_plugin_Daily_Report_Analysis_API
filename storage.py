@@ -55,6 +55,18 @@ class Storage:
                     value TEXT
                 )
             ''')
+            
+            # --- 热更新检查：补齐缺失字段 ---
+            cursor.execute("PRAGMA table_info(group_meta)")
+            columns = [column[1] for column in cursor.fetchall()]
+            if "user_nickname" not in columns:
+                try:
+                    cursor.execute('ALTER TABLE group_meta ADD COLUMN user_nickname TEXT')
+                    cursor.execute('ALTER TABLE group_meta ADD COLUMN bot_nickname TEXT')
+                    logger.info("DailyReportAnalysisAPI: 数据库已成功升级，增加了昵称字段。")
+                except:
+                    pass
+
             conn.commit()
 
     # --- 群组相关操作 ---
