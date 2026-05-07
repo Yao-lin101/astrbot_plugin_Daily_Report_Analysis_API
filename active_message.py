@@ -387,7 +387,10 @@ class ActiveMessageHandler:
                 logger.info("ActiveMessageHandler: 主动消息发送成功。")
                 
                 # 记录到对话历史中
-                if cid and unified_origin:
+                if self.user_unified_origin and ":" in self.user_unified_origin:
+                    parts = self.user_unified_origin.split(":")
+                    unified_origin = parts[0]
+                    cid = parts[1]
                     try:
                         conv = await self.context.conversation_manager.get_conversation(unified_origin, cid)
                         if conv:
@@ -397,18 +400,6 @@ class ActiveMessageHandler:
                              logger.info("ActiveMessageHandler: 已将主动消息写入对话历史。")
                     except Exception as e:
                          logger.error(f"ActiveMessageHandler: 写入对话历史失败: {e}")
-
-                # 将这条主动发送的消息写入 private_messages 中
-                time_str = datetime.now().strftime("%H:%M")
-                # 因为是主动发消息，"用户" 可以为空或者注明是主动发起
-                self.plugin.private_messages.append(
-                    {
-                        "时间": time_str,
-                        "用户": "[机器人主动发起]",
-                        "你的回复": message_content,
-                    }
-                )
-                self.plugin._save_data()
 
             except Exception as e:
                 logger.error(
