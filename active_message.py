@@ -24,24 +24,32 @@ PROMPT_CHECK_STATUS = """任务目标：根据以下角色的当前实时状态�
 {status_data}
 --- 状态记录结束 ---"""
 
-PROMPT_CHECK_STATUS = """任务目标：根据以下角色的当前实时状态记录，判断现在是否是一个合适的时机去主动发消息关怀用户，或者发起闲聊。
-- “关怀”（care）：例如提醒休息、提醒运动、早安晚安问候等。
-- “闲聊”（chat）：如果角色距离当前时间很近的活动是在 QQ 或者其他娱乐项目（如打游戏、看视频），可以考虑发起闲聊，假装不经意间提起某件事。
+PROMPT_CHECK_STATUS = """任务目标：结合当前时间、用户状态及最近对话上下文，判断现在是否是一个合适的时机去主动发消息关怀用户或发起闲聊。
 
-如果你觉得当前不需要打扰，请判断下次什么时间再来观察（如果判断今天都不合适，可以将 continue_observing 设为 false）。
+当前系统时间：{current_time}
+
+判断原则：
+1. **优先遵守用户意愿**：重点检查最近对话上下文。如果用户明确表示了“别烦我”、“在忙”、“两小时内不要来打扰”等类似意愿，必须严格遵守，将 need_message 设为 false。
+2. **状态匹配**：
+   - “关怀”（care）：例如提醒休息、提醒运动、早安晚安问候等。
+   - “闲聊”（chat）：如果角色当前处于娱乐状态（如看视频、打游戏），可考虑发起不经意的闲聊。
+3. **避免过度打扰**：如果刚结束对话不久，除非有极佳的关怀理由，否则应继续观望。
 
 输出 JSON 格式要求（必须只返回合法的 JSON 对象，不带 Markdown 符号等包裹）：
 {{
-  "need_message": true, // 是否需要立刻发送主动消息
-  "message_type": "chat", // "care" 或 "chat"（如果不发消息可为空）
-  "reason": "用户正在看视频，可以假装不经意问一下在看什么或者分享个趣事", // 简短说明理由
-  "continue_observing": false, // 如果 need_message 为 false，是否需要后续继续观察
-  "next_check_time": "12:30" // 格式为 HH:MM，24小时制。如果不继续观察，该字段可为空
+  "need_message": true,
+  "message_type": "chat", // "care" 或 "chat"
+  "reason": "说明理由，若是因为遵守用户指令而推迟，请在理由中注明",
+  "continue_observing": true,
+  "delay_minutes": 0 // 整数。若无特殊要求请设为 0（系统将随机决定下一次观察时间）。仅当用户有明确的时间要求（如“两小时后见”）或根据当前状态判断需要特定的等待时长时，才填写具体的分钟数。
 }}
 
---- 状态记录开始 ---
+--- 角色实时状态 ---
 {status_data}
---- 状态记录结束 ---"""
+
+--- 最近私聊对话上下文 ---
+{conversation_context}
+"""
 
 PROMPT_PREDICT_TIME = """任务目标：根据以下角色的历史活动记录，推测用户今日开始活跃的大致时间。
 请分析用户平时的起床时间、开始使用手机/电脑的时间等规律，给出一个合理的观察启动时间。
@@ -162,8 +170,9 @@ class ActiveMessageHandler:
                         # 发送成功后，拉长下一次轮询的间隔
                         self.reset_polling(min_int=60, max_int=120, reason="发送消息")
                     else:
-                        # 未发送（观望中），保持原有频率
-                        self.reset_polling(reason="观望结束")
+                        # 未发送（观望中）。如果 _check_and_action 内部没有更新 next_check_time（即仍为过去时间），则随机重置
+                        if self.next_check_time <= datetime.now():
+                            self.reset_polling(reason="观望结束")
 
                 await asyncio.sleep(60)
         except asyncio.CancelledError:
@@ -280,8 +289,17 @@ class ActiveMessageHandler:
             return False
 
         status_data = status_res["prompt"]
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # 获取最近对话上下文
+        conversation_context = await self._get_recent_conversation_context(limit=10)
+
         system_prompt = await self._get_system_prompt()
-        prompt = PROMPT_CHECK_STATUS.format(status_data=status_data)
+        prompt = PROMPT_CHECK_STATUS.format(
+            current_time=current_time,
+            status_data=status_data,
+            conversation_context=conversation_context,
+        )
 
         provider_id = self.plugin.config.get("summary_provider_id")
         if not provider_id:
@@ -306,6 +324,26 @@ class ActiveMessageHandler:
                 await self._generate_and_send_message(reason, message_type, status_data)
                 return True
             else:
+                delay_minutes = result_json.get("delay_minutes", 0)
+                if (
+                    delay_minutes
+                    and isinstance(delay_minutes, (int, float))
+                    and delay_minutes > 0
+                ):
+                    try:
+                        now = datetime.now()
+                        self.next_check_time = now + timedelta(minutes=int(delay_minutes))
+                        self.db.update_plugin_meta(
+                            "active_msg_next_check_time",
+                            self.next_check_time.isoformat(),
+                        )
+                        logger.info(
+                            f"ActiveMessageHandler: 遵循模型建议，将在 {delay_minutes} 分钟后（{self.next_check_time}）再次观察 (理由: {reason})"
+                        )
+                        return False
+                    except Exception as e:
+                        logger.debug(f"应用延迟时间失败: {e}")
+
                 logger.info("ActiveMessageHandler: 判定不需要发消息。")
                 return False
 
@@ -343,6 +381,35 @@ class ActiveMessageHandler:
 
         return content.strip()
 
+    async def _get_recent_conversation_context(self, limit: int = 10) -> str:
+        """获取最近的私聊对话上下文并格式化为字符串"""
+        specific_user_id = self.plugin.config.get("specific_user_id")
+        if not specific_user_id:
+            return "（暂无最近对话记录）"
+
+        try:
+            messages = self.db.get_recent_private_messages(
+                str(specific_user_id), limit=limit
+            )
+            if not messages:
+                return "（暂无最近对话记录）"
+
+            context_lines = []
+            for m in messages:
+                role_label = "用户" if m["role"] == "user" else "你"
+                # 增加时间标注 (MM-DD HH:MM)
+                ts = m.get("timestamp")
+                time_prefix = ""
+                if ts:
+                    time_prefix = (
+                        f"[{datetime.fromtimestamp(ts).strftime('%m-%d %H:%M')}] "
+                    )
+                context_lines.append(f"{time_prefix}{role_label}: {m['content']}")
+            return "\n".join(context_lines)
+        except Exception as e:
+            logger.error(f"ActiveMessageHandler: 从数据库获取对话上下文失败: {e}")
+            return "（暂无最近对话记录）"
+
     async def _generate_and_send_message(
         self, reason: str, message_type: str = "care", short_data: str = ""
     ):
@@ -360,24 +427,13 @@ class ActiveMessageHandler:
             memory_data = short_data
         system_prompt = await self._get_system_prompt()
 
-        # 获取最近的私聊对话上下文 (改用数据库拉取)
-        conversation_context = ""
-        specific_user_id = self.plugin.config.get("specific_user_id")
-        if specific_user_id:
-            try:
-                messages = self.db.get_recent_private_messages(
-                    str(specific_user_id), limit=10
-                )
-                for m in messages:
-                    role_label = "用户" if m["role"] == "user" else "你"
-                    conversation_context += f"{role_label}: {m['content']}\n"
-                logger.info(
-                    f"ActiveMessageHandler: 成功从数据库提取到 {len(messages)} 条对话上下文。"
-                )
-            except Exception as e:
-                logger.error(f"ActiveMessageHandler: 从数据库获取对话上下文失败: {e}")
+        # 获取最近的私聊对话上下文
+        conversation_context = await self._get_recent_conversation_context(limit=10)
 
-        gen_prompt = f"""任务目标：根据你的人设以及下面的角色实时状态与历史记忆档案，主动给用户发一条消息。
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        gen_prompt = f"""任务目标：根据你的人设以及下面的角色实时状态与历史记忆档案，结合当前系统时间，主动给用户发一条消息。
+
+当前系统时间：{current_time}
 当前的发送动机是：{reason}
 
 --- 状态与记忆档案 ---
