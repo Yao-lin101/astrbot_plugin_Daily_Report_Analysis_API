@@ -1,11 +1,10 @@
 import asyncio
 import json
-import traceback
 import random
+import traceback
 from datetime import datetime, timedelta
 
 from astrbot.api import logger
-from astrbot.core.message.components import Plain
 from astrbot.core.star.star_tools import StarTools
 
 PROMPT_CHECK_STATUS = """任务目标：根据以下角色的当前实时状态记录，判断现在是否是一个合适的时机去主动发消息关怀用户，或者发起闲聊。
@@ -44,6 +43,19 @@ PROMPT_CHECK_STATUS = """任务目标：根据以下角色的当前实时状态�
 {status_data}
 --- 状态记录结束 ---"""
 
+PROMPT_PREDICT_TIME = """任务目标：根据以下角色的历史活动记录，推测用户今日开始活跃的大致时间。
+请分析用户平时的起床时间、开始使用手机/电脑的时间等规律，给出一个合理的观察启动时间。
+
+输出 JSON 格式要求（必须只返回合法的 JSON 对象，不带 Markdown 符号等包裹）：
+{{
+  "reason": "根据历史记录，用户通常在早上 8 点左右开始活跃",
+  "next_check_time": "08:00" // 格式为 HH:MM，24小时制
+}}
+
+--- 状态记录开始 ---
+{status_data}
+--- 状态记录结束 ---"""
+
 
 class ActiveMessageHandler:
     def __init__(self, plugin):
@@ -52,18 +64,30 @@ class ActiveMessageHandler:
         self.api_service = plugin.api_service
         self.db = plugin.db
         self.loop_task = None
-        
+
         # 从数据库恢复状态
         try:
             next_check_str = self.db.get_plugin_meta("active_msg_next_check_time")
-            self.next_check_time = datetime.fromisoformat(next_check_str) if next_check_str else datetime.now() + timedelta(minutes=1)
-            
-            self.messages_sent_today = int(self.db.get_plugin_meta("active_msg_sent_today", 0))
-            
+            self.next_check_time = (
+                datetime.fromisoformat(next_check_str)
+                if next_check_str
+                else datetime.now() + timedelta(minutes=1)
+            )
+
+            self.messages_sent_today = int(
+                self.db.get_plugin_meta("active_msg_sent_today", 0)
+            )
+
             last_reset_str = self.db.get_plugin_meta("active_msg_last_reset_date")
-            self.last_reset_date = datetime.strptime(last_reset_str, "%Y-%m-%d").date() if last_reset_str else datetime.now().date()
-            
-            self._user_unified_origin = self.db.get_plugin_meta("active_msg_user_origin")
+            self.last_reset_date = (
+                datetime.strptime(last_reset_str, "%Y-%m-%d").date()
+                if last_reset_str
+                else datetime.now().date()
+            )
+
+            self._user_unified_origin = self.db.get_plugin_meta(
+                "active_msg_user_origin"
+            )
         except Exception as e:
             logger.error(f"ActiveMessageHandler: 恢复状态失败: {e}")
             self.next_check_time = datetime.now() + timedelta(minutes=1)
@@ -108,12 +132,18 @@ class ActiveMessageHandler:
                     self.messages_sent_today = 0
                     self.last_reset_date = now.date()
                     self.db.update_plugin_meta("active_msg_sent_today", 0)
-                    self.db.update_plugin_meta("active_msg_last_reset_date", self.last_reset_date.isoformat())
+                    self.db.update_plugin_meta(
+                        "active_msg_last_reset_date", self.last_reset_date.isoformat()
+                    )
 
                 if self.messages_sent_today >= max_msgs:
                     next_day = now + timedelta(days=1)
-                    self.next_check_time = next_day.replace(hour=0, minute=0, second=0, microsecond=0)
-                    self.db.update_plugin_meta("active_msg_next_check_time", self.next_check_time.isoformat())
+                    self.next_check_time = next_day.replace(
+                        hour=0, minute=0, second=0, microsecond=0
+                    )
+                    self.db.update_plugin_meta(
+                        "active_msg_next_check_time", self.next_check_time.isoformat()
+                    )
 
                 if now >= self.next_check_time:
                     sent = False
@@ -121,9 +151,13 @@ class ActiveMessageHandler:
                         sent = await self._check_and_action()
                         if sent:
                             self.messages_sent_today += 1
-                            self.db.update_plugin_meta("active_msg_sent_today", self.messages_sent_today)
-                            logger.info(f"ActiveMessageHandler: 今日已发送主动消息 {self.messages_sent_today}/{max_msgs} 条")
-                    
+                            self.db.update_plugin_meta(
+                                "active_msg_sent_today", self.messages_sent_today
+                            )
+                            logger.info(
+                                f"ActiveMessageHandler: 今日已发送主动消息 {self.messages_sent_today}/{max_msgs} 条"
+                            )
+
                     if sent:
                         # 发送成功后，拉长下一次轮询的间隔
                         self.reset_polling(min_int=60, max_int=120, reason="发送消息")
@@ -142,15 +176,27 @@ class ActiveMessageHandler:
 
     def reset_polling(self, min_int=None, max_int=None, reason="互动"):
         config = self.plugin.config or {}
-        min_interval = min_int if min_int is not None else config.get("active_msg_min_interval", 30)
-        max_interval = max_int if max_int is not None else config.get("active_msg_max_interval", 60)
+        min_interval = (
+            min_int
+            if min_int is not None
+            else config.get("active_msg_min_interval", 30)
+        )
+        max_interval = (
+            max_int
+            if max_int is not None
+            else config.get("active_msg_max_interval", 60)
+        )
         offset_minutes = random.randint(min_interval, max_interval)
         self.next_check_time = datetime.now() + timedelta(minutes=offset_minutes)
-        
+
         # 持久化
-        self.db.update_plugin_meta("active_msg_next_check_time", self.next_check_time.isoformat())
-        
-        logger.info(f"ActiveMessageHandler: 收到{reason}，已重置主动消息轮询时间至 {self.next_check_time} ({offset_minutes}分钟后)")
+        self.db.update_plugin_meta(
+            "active_msg_next_check_time", self.next_check_time.isoformat()
+        )
+
+        logger.info(
+            f"ActiveMessageHandler: 收到{reason}，已重置主动消息轮询时间至 {self.next_check_time} ({offset_minutes}分钟后)"
+        )
 
     async def _get_system_prompt(self):
         config = self.plugin.config or {}
@@ -227,10 +273,7 @@ class ActiveMessageHandler:
             self.next_check_time = now + timedelta(minutes=60)
 
     async def _check_and_action(self):
-        logger.info(
-            f"ActiveMessageHandler: 到达观察时间，正在评估状态..."
-        )
-        now = datetime.now()
+        logger.info("ActiveMessageHandler: 到达观察时间，正在评估状态...")
         status_res = await self.api_service.fetch_status(memory="short")
         if not status_res or "prompt" not in status_res:
             logger.error("ActiveMessageHandler: 无法获取 short 状态，稍后重试。")
@@ -268,13 +311,14 @@ class ActiveMessageHandler:
 
         except Exception as e:
             logger.error(
-                f"ActiveMessageHandler: 解析评估状态失败 {e}。LLM 返回: {response.completion_text}"
+                f"ActiveMessageHandler: 解析评估状态失败 {e}。LLM 返回: {response.completion_text if 'response' in locals() else 'No response'}"
             )
             return False
 
     def _clean_message_content(self, content):
         """清洗消息内容，去除 think 块、system_reminder 和 JSON 结构"""
         import re
+
         if isinstance(content, list):
             # 处理 AstrBot 的组件化消息格式
             text_parts = []
@@ -286,22 +330,28 @@ class ActiveMessageHandler:
                 elif isinstance(part, str):
                     text_parts.append(part)
             content = "".join(text_parts)
-        
+
         if not isinstance(content, str):
             return ""
-            
+
         # 去除 <system_reminder>...</system_reminder> 及其内容
-        content = re.sub(r'<system_reminder>.*?</system_reminder>', '', content, flags=re.DOTALL)
+        content = re.sub(
+            r"<system_reminder>.*?</system_reminder>", "", content, flags=re.DOTALL
+        )
         # 去除可能的 Markdown 思考块
-        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
-        
+        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+
         return content.strip()
 
-    async def _generate_and_send_message(self, reason: str, message_type: str = "care", short_data: str = ""):
+    async def _generate_and_send_message(
+        self, reason: str, message_type: str = "care", short_data: str = ""
+    ):
         if message_type == "chat":
             hybrid_res = await self.api_service.fetch_status(memory="hybrid")
             if not hybrid_res or "prompt" not in hybrid_res:
-                logger.error("ActiveMessageHandler: 获取 hybrid 状态失败，退回使用 short 状态。")
+                logger.error(
+                    "ActiveMessageHandler: 获取 hybrid 状态失败，退回使用 short 状态。"
+                )
                 memory_data = short_data
             else:
                 memory_data = hybrid_res["prompt"]
@@ -309,17 +359,21 @@ class ActiveMessageHandler:
             # 关怀类直接使用短时记忆
             memory_data = short_data
         system_prompt = await self._get_system_prompt()
-        
+
         # 获取最近的私聊对话上下文 (改用数据库拉取)
         conversation_context = ""
         specific_user_id = self.plugin.config.get("specific_user_id")
         if specific_user_id:
             try:
-                messages = self.db.get_recent_private_messages(str(specific_user_id), limit=10)
+                messages = self.db.get_recent_private_messages(
+                    str(specific_user_id), limit=10
+                )
                 for m in messages:
                     role_label = "用户" if m["role"] == "user" else "你"
                     conversation_context += f"{role_label}: {m['content']}\n"
-                logger.info(f"ActiveMessageHandler: 成功从数据库提取到 {len(messages)} 条对话上下文。")
+                logger.info(
+                    f"ActiveMessageHandler: 成功从数据库提取到 {len(messages)} 条对话上下文。"
+                )
             except Exception as e:
                 logger.error(f"ActiveMessageHandler: 从数据库获取对话上下文失败: {e}")
 
@@ -341,7 +395,9 @@ class ActiveMessageHandler:
 
 请直接输出你要发送的消息内容，不要有任何 Markdown 包裹或附加的说明文字。"""
 
-        logger.info(f"ActiveMessageHandler: 准备发送给大模型的生成提示词：\n{gen_prompt}")
+        logger.info(
+            f"ActiveMessageHandler: 准备发送给大模型的生成提示词：\n{gen_prompt}"
+        )
 
         provider_id = self.plugin.config.get("summary_provider_id")
         response = await self.context.llm_generate(
@@ -364,7 +420,7 @@ class ActiveMessageHandler:
                 chain = MessageChain().message(message_content)
                 # 优先使用实时探测到的来源，否则保底使用特定平台
                 # 平台兼容性处理
-                target_platform = "aiocqhttp" # 默认保底
+                target_platform = "aiocqhttp"  # 默认保底
                 if self.user_unified_origin and ":" in self.user_unified_origin:
                     raw_platform = self.user_unified_origin.split(":")[0]
                     # 针对 Arisu 等适配器名称进行转换
@@ -379,27 +435,42 @@ class ActiveMessageHandler:
                     message_chain=chain,
                     platform=target_platform,
                 )
-                
+
                 # 记录到数据库
-                self.db.add_private_message(str(specific_user_id), "bot", message_content, datetime.now().timestamp())
-                
-                logger.info(f"ActiveMessageHandler: 成功发送主动关心消息并记录至数据库。")
+                self.db.add_private_message(
+                    str(specific_user_id),
+                    "bot",
+                    message_content,
+                    datetime.now().timestamp(),
+                )
+
+                logger.info(
+                    "ActiveMessageHandler: 成功发送主动关心消息并记录至数据库。"
+                )
                 logger.info("ActiveMessageHandler: 主动消息发送成功。")
-                
+
                 # 记录到对话历史中
                 if self.user_unified_origin and ":" in self.user_unified_origin:
                     parts = self.user_unified_origin.split(":")
                     unified_origin = parts[0]
                     cid = parts[1]
                     try:
-                        conv = await self.context.conversation_manager.get_conversation(unified_origin, cid)
+                        conv = await self.context.conversation_manager.get_conversation(
+                            unified_origin, cid
+                        )
                         if conv:
-                             history = json.loads(conv.history)
-                             history.append({"role": "assistant", "content": message_content})
-                             await self.context.conversation_manager.update_conversation(unified_origin, cid, history=history)
-                             logger.info("ActiveMessageHandler: 已将主动消息写入对话历史。")
+                            history = json.loads(conv.history)
+                            history.append(
+                                {"role": "assistant", "content": message_content}
+                            )
+                            await self.context.conversation_manager.update_conversation(
+                                unified_origin, cid, history=history
+                            )
+                            logger.info(
+                                "ActiveMessageHandler: 已将主动消息写入对话历史。"
+                            )
                     except Exception as e:
-                         logger.error(f"ActiveMessageHandler: 写入对话历史失败: {e}")
+                        logger.error(f"ActiveMessageHandler: 写入对话历史失败: {e}")
 
             except Exception as e:
                 logger.error(

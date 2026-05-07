@@ -1,7 +1,8 @@
-import os
 import json
+import os
+from datetime import datetime, timedelta, timezone
+
 import httpx
-from datetime import datetime, timezone, timedelta
 from dateutil.parser import parse
 from mcp.server.fastmcp import FastMCP
 
@@ -9,7 +10,9 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP("StillAlive-Status-MCP")
 
 # 1. 环境变量加载逻辑
-BASE_URL = os.environ.get("STILLALIVE_BASE_URL", "https://alive.ineed.asia/").rstrip("/")
+BASE_URL = os.environ.get("STILLALIVE_BASE_URL", "https://alive.ineed.asia/").rstrip(
+    "/"
+)
 
 # 解析角色配置
 CHARACTERS_RAW = os.environ.get("STILLALIVE_CHARACTERS", "[]").strip()
@@ -19,15 +22,15 @@ if CHARACTERS_RAW:
     # 逻辑：如果是路径则检查并创建，否则解析字符串
     # 判断是否看起来像个路径（包含斜杠或.json结尾）
     is_path = "/" in CHARACTERS_RAW or CHARACTERS_RAW.endswith(".json")
-    
+
     if is_path:
         try:
             # 如果文件不存在，自动创建初始模板
             if not os.path.exists(CHARACTERS_RAW):
                 with open(CHARACTERS_RAW, "w", encoding="utf-8") as f:
                     json.dump([], f, indent=2)
-            
-            with open(CHARACTERS_RAW, "r", encoding="utf-8-sig") as f:
+
+            with open(CHARACTERS_RAW, encoding="utf-8-sig") as f:
                 CHARACTERS = json.load(f)
         except Exception:
             CHARACTERS = []
@@ -40,6 +43,7 @@ if CHARACTERS_RAW:
 # 建立快速查找索引
 DISPLAY_TO_CHAR = {c["display_code"]: c for c in CHARACTERS if "display_code" in c}
 USER_ID_TO_CHAR = {c["user_id"]: c for c in CHARACTERS if "user_id" in c}
+
 
 def get_character_info_prompt() -> str:
     """生成用于工具描述的角色信息提示，帮助 LLM 智能识别"""
@@ -57,8 +61,10 @@ def get_character_info_prompt() -> str:
         info_parts.append(part)
     return "\n当前配置的可直接查询角色列表：\n" + "\n".join(info_parts)
 
+
 # 动态生成描述前缀
 CHAR_PROMPT = get_character_info_prompt()
+
 
 # 通用请求头处理
 def get_headers(display_code: str = None):
@@ -68,6 +74,7 @@ def get_headers(display_code: str = None):
         if key:
             headers["X-Character-Key"] = key
     return headers
+
 
 @mcp.tool(
     description=(
@@ -83,40 +90,43 @@ async def get_character_list() -> str:
             res = await client.get(url)
             if res.status_code != 200:
                 return f"获取列表失败，状态码：{res.status_code}"
-            
+
             data = res.json()
             results = data.get("results", [])
             now = datetime.now(timezone.utc)
-            
+
             active_chars = []
             for item in results:
                 last_updated_str = item.get("last_updated")
                 if not last_updated_str:
                     continue
-                
+
                 try:
                     last_updated = parse(last_updated_str)
                     # 统一转为 UTC 进行比较
                     if last_updated.tzinfo is None:
                         last_updated = last_updated.replace(tzinfo=timezone.utc)
-                    
+
                     delta = now - last_updated
                     if delta.total_seconds() <= 86400:  # 24小时
                         active_chars.append(item)
                 except Exception:
                     continue
-            
+
             if not active_chars:
                 return "当前 24 小时内没有活跃角色。"
-            
+
             output_lines = []
             for i, c in enumerate(active_chars, 1):
-                output_lines.append(f"{i}、{c.get('name')}：展示码：{c.get('display_code')}")
-            
+                output_lines.append(
+                    f"{i}、{c.get('name')}：展示码：{c.get('display_code')}"
+                )
+
             return "\n".join(output_lines)
-            
+
         except Exception as e:
             return f"获取列表请求异常: {str(e)}"
+
 
 @mcp.tool(
     description=(
@@ -137,22 +147,28 @@ async def get_character_status(display_code: str) -> str:
     now_utc = datetime.now(timezone.utc)
     tz_beijing = timezone(timedelta(hours=8))
     today_str = now_utc.astimezone(tz_beijing).strftime("%Y-%m-%d")
-    
+
     headers = get_headers(display_code)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             # 使用传入的 display_code 构造路径
-            config_res = await client.get(f"{BASE_URL}/api/v1/d/{display_code}/", headers=headers)
-            status_res = await client.get(f"{BASE_URL}/api/v1/d/{display_code}/status/", headers=headers)
+            config_res = await client.get(
+                f"{BASE_URL}/api/v1/d/{display_code}/", headers=headers
+            )
+            status_res = await client.get(
+                f"{BASE_URL}/api/v1/d/{display_code}/status/", headers=headers
+            )
             report_res = await client.get(
                 f"{BASE_URL}/api/v1/d/{display_code}/reports/detail/?date={today_str}",
                 headers=headers,
             )
 
             if config_res.status_code != 200 or status_res.status_code != 200:
-                return (f"获取状态失败，API 返回异常。\n"
-                        f"Config Status: {config_res.status_code}, Status API: {status_res.status_code}")
+                return (
+                    f"获取状态失败，API 返回异常。\n"
+                    f"Config Status: {config_res.status_code}, Status API: {status_res.status_code}"
+                )
 
             config_data = config_res.json()
             status_data = status_res.json()
@@ -178,14 +194,14 @@ async def get_character_status(display_code: str) -> str:
     # ========== 解析 2: 动态解析所有数据块 ==========
     sections = []
     status_categories = status_data.get("status_data", {})
-    
+
     for cat_key, cat_info in status_categories.items():
         cat_data = cat_info.get("data", {})
         cat_time_str = cat_info.get("updated_at")
-        
+
         if not cat_data:
             continue
-            
+
         # 计算该块的距今时间
         time_display = ""
         if cat_time_str:
@@ -193,18 +209,21 @@ async def get_character_status(display_code: str) -> str:
                 cat_time = ensure_utc(cat_time_str)
                 delta = now_utc - cat_time
                 delta_seconds = delta.total_seconds()
-                
+
                 # 剔除超过 24 小时（1天）的过时数据块
                 if delta_seconds > 86400:
                     continue
-                
-                if delta_seconds < 60: t_ago = "刚刚"
-                elif delta_seconds < 3600: t_ago = f"{int(delta_seconds // 60)} 分钟前"
-                else: t_ago = f"{int(delta_seconds // 3600)} 小时前"
+
+                if delta_seconds < 60:
+                    t_ago = "刚刚"
+                elif delta_seconds < 3600:
+                    t_ago = f"{int(delta_seconds // 60)} 分钟前"
+                else:
+                    t_ago = f"{int(delta_seconds // 3600)} 小时前"
                 time_display = f"({t_ago})"
-            except:
+            except Exception:
                 pass
-        
+
         # 格式化该块的数据
         lines = []
         for k, v in cat_data.items():
@@ -215,7 +234,7 @@ async def get_character_status(display_code: str) -> str:
                 lines.append(f"  - {desc}：{v}{suffix}")
             else:
                 lines.append(f"  - {k}：{v}")
-        
+
         if lines:
             sections.append(f"[{cat_key}] {time_display}\n" + "\n".join(lines))
 
@@ -224,7 +243,7 @@ async def get_character_status(display_code: str) -> str:
     # ========== 解析 3: 全局最新活跃汇总 ==========
     mac_info = status_categories.get("mac", {})
     vital_info = status_categories.get("vital_signs", {})
-    
+
     # 统一时区处理辅助逻辑
     def ensure_utc_v2(dt_str):
         dt = parse(dt_str)
@@ -234,7 +253,7 @@ async def get_character_status(display_code: str) -> str:
 
     m_time = ensure_utc_v2(mac_info.get("updated_at", "1970-01-01T00:00:00Z"))
     v_time = ensure_utc_v2(vital_info.get("updated_at", "1970-01-01T00:00:00Z"))
-    
+
     if m_time > v_time:
         latest_time, app_name = m_time, mac_info.get("data", {}).get("mac", "未知")
         latest_str = f"Mac 正在使用：{app_name}"
@@ -246,14 +265,18 @@ async def get_character_status(display_code: str) -> str:
     try:
         delta = now_utc - latest_time
         delta_seconds = delta.total_seconds()
-        
-        if delta_seconds < 60: t_ago = "刚刚"
-        elif delta_seconds < 3600: t_ago = f"{int(delta_seconds // 60)} 分钟前"
-        elif delta_seconds < 86400: t_ago = f"{int(delta_seconds // 3600)} 小时前"
-        else: t_ago = f"{int(delta_seconds // 86400)} 天前"
-        
+
+        if delta_seconds < 60:
+            t_ago = "刚刚"
+        elif delta_seconds < 3600:
+            t_ago = f"{int(delta_seconds // 60)} 分钟前"
+        elif delta_seconds < 86400:
+            t_ago = f"{int(delta_seconds // 3600)} 小时前"
+        else:
+            t_ago = f"{int(delta_seconds // 86400)} 天前"
+
         latest_formatted = f"{latest_str} （最后活跃：{t_ago}）"
-    except:
+    except Exception:
         latest_formatted = "无法解析最新活跃时间"
 
     return f"""角色在 {today_str} 的日报内容：
@@ -264,6 +287,7 @@ async def get_character_status(display_code: str) -> str:
 
 概览：
 {latest_formatted}"""
+
 
 @mcp.tool(
     description=(
@@ -282,19 +306,26 @@ async def search_historical_memory(display_code: str, query: str) -> str:
     async with httpx.AsyncClient() as client:
         url = f"{BASE_URL}/api/v1/bot/status/"
         try:
-            res = await client.get(url, headers=headers, params={"memory": "long", "q": query})
+            res = await client.get(
+                url, headers=headers, params={"memory": "long", "q": query}
+            )
             if res.status_code == 200:
                 data = res.json()
                 prompt_text = data.get("prompt", "暂无匹配的长期记忆。")
                 # 剔除首尾冗余的指导语
-                replacements = ["## 可用的长期重要记忆\n", "## 可能相关的长期重要记忆\n", 
-                               "\n可以在这些内容中寻找话题。", "\n请把这些记忆当作背景线索自然使用；如果今天数据不相关，不要强行提及。"]
+                replacements = [
+                    "## 可用的长期重要记忆\n",
+                    "## 可能相关的长期重要记忆\n",
+                    "\n可以在这些内容中寻找话题。",
+                    "\n请把这些记忆当作背景线索自然使用；如果今天数据不相关，不要强行提及。",
+                ]
                 for r in replacements:
                     prompt_text = prompt_text.replace(r, "")
                 return prompt_text.strip()
             return f"记忆检索失败，状态码：{res.status_code}"
         except Exception as e:
             return f"记忆检索失败，网络请求异常: {str(e)}"
+
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")
