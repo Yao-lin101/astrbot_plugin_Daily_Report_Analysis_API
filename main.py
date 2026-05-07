@@ -341,7 +341,7 @@ class DailyReportAnalysisAPI(Star):
 
         # 复制消息链并尝试补全被 RespondStage 剥离的 Reply/At 组件
         chain = result.chain[:]
-        platform_settings = self.context.astrbot_config.get("platform_settings", {})
+        platform_settings = self.context.get_config().get("platform_settings", {})
         if (
             result.is_model_result()
             and platform_settings.get("reply_with_quote")
