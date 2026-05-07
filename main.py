@@ -240,9 +240,7 @@ class DailyReportAnalysisAPI(Star):
             and not event.message_obj.group_id
         ):
             if self.active_message_handler:
-                self.active_message_handler.reset_polling(
-                    min_int=60, max_int=120, reason="用户互动"
-                )
+                self.active_message_handler.reset_polling(reason="用户互动")
                 self.active_message_handler.user_unified_origin = (
                     event.unified_msg_origin
                 )

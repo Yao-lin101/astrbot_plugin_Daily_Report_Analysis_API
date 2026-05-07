@@ -117,7 +117,7 @@ class ActiveMessageHandler:
 
                     if sent:
                         # 发送成功后，拉长下一次轮询的间隔
-                        self.reset_polling(min_int=60, max_int=120, reason="发送消息")
+                        self.reset_polling(reason="发送消息")
                     else:
                         # 未发送（观望中）。如果 _check_and_action 内部没有更新 next_check_time（即仍为过去时间），则随机重置
                         if self.next_check_time <= datetime.now():
@@ -405,6 +405,7 @@ class ActiveMessageHandler:
         logger.info(f"ActiveMessageHandler: 生成主动消息：{message_content}")
 
         # 发送消息
+        specific_user_id = self.plugin.config.get("specific_user_id")
         if specific_user_id:
             try:
                 from astrbot.core.message.message_event_result import MessageChain
