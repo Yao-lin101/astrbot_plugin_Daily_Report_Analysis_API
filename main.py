@@ -199,21 +199,20 @@ class DailyReportAnalysisAPI(Star):
         specific_user_id = str(self.config.get("specific_user_id", ""))
         return sender_id == specific_user_id
 
-    def _get_group_name(self, event: AstrMessageEvent) -> str:
-        """获取群名称，优先从事件获取，其次从缓存，最后保底"""
+    def _get_group_name(self, event: AstrMessageEvent) -> str | None:
+        """获取群名称，优先从事件获取，其次从缓存"""
         group_id = event.message_obj.group_id
         if not group_id:
-            return "未知群聊"
+            return None
 
-        group_name = None
+        # 1. 尝试从当前事件获取
         if event.message_obj.group and event.message_obj.group.group_name:
             group_name = event.message_obj.group.group_name
             self.group_names[group_id] = group_name
+            return group_name
 
-        if not group_name:
-            group_name = self.group_names.get(group_id, "未知群聊")
-
-        return group_name
+        # 2. 尝试从内存缓存获取 (内存缓存由 _get_group_context 在初始化或首次收到消息时从 DB 加载)
+        return self.group_names.get(group_id)
 
     @filter.command("stillalive日报")
     async def get_stillalive_report(self, event: AstrMessageEvent, date: str = None):
