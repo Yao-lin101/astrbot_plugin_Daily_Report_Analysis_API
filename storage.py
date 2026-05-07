@@ -25,7 +25,8 @@ class Storage:
                     sender_name TEXT,
                     content TEXT,
                     timestamp REAL,
-                    platform_msg_id TEXT
+                    platform_msg_id TEXT,
+                    is_specific_user INTEGER DEFAULT 0 -- 0: 否, 1: 是 (对于机器人，表示是否回复给特定用户)
                 )
             """)
             # 2. 群元数据表 (存储进度和计数器)
@@ -89,6 +90,19 @@ class Storage:
                     """)
                     logger.info(
                         "DailyReportAnalysisAPI: 数据库 private_messages 已重构。"
+                    )
+                except Exception:
+                    pass
+
+            cursor.execute("PRAGMA table_info(group_messages)")
+            g_columns = [column[1] for column in cursor.fetchall()]
+            if "is_specific_user" not in g_columns:
+                try:
+                    cursor.execute(
+                        "ALTER TABLE group_messages ADD COLUMN is_specific_user INTEGER DEFAULT 0"
+                    )
+                    logger.info(
+                        "DailyReportAnalysisAPI: 数据库 group_messages 已升级。"
                     )
                 except Exception:
                     pass
@@ -159,13 +173,14 @@ class Storage:
         content,
         timestamp,
         platform_msg_id,
+        is_specific_user=False,
     ):
         with self._get_conn() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO group_messages (group_id, msg_id_in_group, sender_id, sender_name, content, timestamp, platform_msg_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO group_messages (group_id, msg_id_in_group, sender_id, sender_name, content, timestamp, platform_msg_id, is_specific_user)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     group_id,
@@ -175,6 +190,7 @@ class Storage:
                     content,
                     timestamp,
                     str(platform_msg_id),
+                    1 if is_specific_user else 0,
                 ),
             )
             conn.commit()

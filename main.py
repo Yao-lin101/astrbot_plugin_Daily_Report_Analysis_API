@@ -291,6 +291,7 @@ class DailyReportAnalysisAPI(Star):
                 msg_content_formatted,
                 now,
                 event.message_obj.message_id,
+                is_specific_user=is_specific_user,
             )
             meta_update = {"group_name": group_name, "message_id_counter": msg_id}
             if is_specific_user:
@@ -357,7 +358,14 @@ class DailyReportAnalysisAPI(Star):
                 self._get_group_context(group_id)
             self.message_id_counter[group_id] += 1
             msg_id = self.message_id_counter[group_id]
-            msg_content_formatted = f"【你】{bot_name}: {reply_text}"
+
+            trigger_sender_id = str(event.get_sender_id())
+            specific_user_id = str(self.config.get("specific_user_id", ""))
+            is_reply_to_specific = trigger_sender_id == specific_user_id
+
+            prefix = "【你】" if is_reply_to_specific else "【你(群回复)】"
+            msg_content_formatted = f"{prefix}{bot_name}: {reply_text}"
+
             self.db.add_group_message(
                 group_id,
                 msg_id,
@@ -366,6 +374,7 @@ class DailyReportAnalysisAPI(Star):
                 msg_content_formatted,
                 datetime.now().timestamp(),
                 event.message_obj.message_id,
+                is_specific_user=is_reply_to_specific,
             )
             self.db.update_group_meta(
                 group_id,
