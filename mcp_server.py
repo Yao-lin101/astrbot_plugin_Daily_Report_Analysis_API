@@ -225,24 +225,25 @@ async def get_character_status(display_code: str) -> str:
     mac_info = status_categories.get("mac", {})
     vital_info = status_categories.get("vital_signs", {})
     
-        # 统一时区处理辅助逻辑
-        def ensure_utc(dt_str):
-            dt = parse(dt_str)
-            if dt.tzinfo is None:
-                return dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone(timezone.utc)
+    # 统一时区处理辅助逻辑
+    def ensure_utc_v2(dt_str):
+        dt = parse(dt_str)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
 
-        m_time = ensure_utc(mac_info.get("updated_at", "1970-01-01T00:00:00Z"))
-        v_time = ensure_utc(vital_info.get("updated_at", "1970-01-01T00:00:00Z"))
-        
-        if m_time > v_time:
-            latest_time, app_name = m_time, mac_info.get("data", {}).get("mac", "未知")
-            latest_str = f"Mac 正在使用：{app_name}"
-        else:
-            latest_time, app_name = v_time, vital_info.get("data", {}).get("phone", "未知")
-            latest_str = f"手机正在使用：{app_name}"
+    m_time = ensure_utc_v2(mac_info.get("updated_at", "1970-01-01T00:00:00Z"))
+    v_time = ensure_utc_v2(vital_info.get("updated_at", "1970-01-01T00:00:00Z"))
+    
+    if m_time > v_time:
+        latest_time, app_name = m_time, mac_info.get("data", {}).get("mac", "未知")
+        latest_str = f"Mac 正在使用：{app_name}"
+    else:
+        latest_time, app_name = v_time, vital_info.get("data", {}).get("phone", "未知")
+        latest_str = f"手机正在使用：{app_name}"
 
-        # 转换到北京时间显示
+    # 转换到北京时间显示
+    try:
         latest_formatted = f"{latest_str} （最后活跃：{latest_time.astimezone(tz_beijing).strftime('%H:%M')}）"
     except:
         latest_formatted = "无法解析最新活跃时间"
