@@ -38,14 +38,14 @@ class Storage:
                     bot_nickname TEXT
                 )
             ''')
-            # 3. 私聊消息表
+            # 3. 私聊消息表 (流式记录身份)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS private_messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    sender_id TEXT,
-                    timestamp REAL,
+                    user_id TEXT,
+                    role TEXT, -- 'user' 或 'bot'
                     content TEXT,
-                    bot_reply TEXT
+                    timestamp REAL
                 )
             ''')
             # 4. 插件全局元数据表 (用于存储主动消息时间等)
@@ -63,7 +63,26 @@ class Storage:
                 try:
                     cursor.execute('ALTER TABLE group_meta ADD COLUMN user_nickname TEXT')
                     cursor.execute('ALTER TABLE group_meta ADD COLUMN bot_nickname TEXT')
-                    logger.info("DailyReportAnalysisAPI: 数据库已成功升级，增加了昵称字段。")
+                    logger.info("DailyReportAnalysisAPI: 数据库 group_meta 已升级。")
+                except:
+                    pass
+            
+            cursor.execute("PRAGMA table_info(private_messages)")
+            p_columns = [column[1] for column in cursor.fetchall()]
+            if p_columns and "role" not in p_columns:
+                try:
+                    # 私聊表结构变动较大，直接重建
+                    cursor.execute('DROP TABLE private_messages')
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS private_messages (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            user_id TEXT,
+                            role TEXT,
+                            content TEXT,
+                            timestamp REAL
+                        )
+                    ''')
+                    logger.info("DailyReportAnalysisAPI: 数据库 private_messages 已重构。")
                 except:
                     pass
 
@@ -128,30 +147,51 @@ class Storage:
 
     # --- 私聊相关操作 ---
 
-    def add_private_message(self, sender_id, content, timestamp, bot_reply=""):
+    def add_private_message(self, user_id, role, content, timestamp):
         with self._get_conn() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO private_messages (sender_id, content, timestamp, bot_reply)
+                INSERT INTO private_messages (user_id, role, content, timestamp)
                 VALUES (?, ?, ?, ?)
-            ''', (sender_id, content, timestamp, bot_reply))
+            ''', (user_id, role, content, timestamp))
             conn.commit()
 
-    def get_recent_private_messages(self, sender_id, limit=20):
+    def get_pending_private_messages(self, user_id, last_id, limit=50):
+        """获取尚未总结的私聊消息流"""
         with self._get_conn() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT content as 用户, bot_reply as 你的回复, timestamp
+                SELECT id, role, content, timestamp
                 FROM private_messages 
-                WHERE sender_id = ?
+                WHERE user_id = ? AND id > ?
+                ORDER BY id ASC
+                LIMIT ?
+            ''', (user_id, last_id, limit))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_recent_private_messages(self, user_id, limit=20):
+        """获取最近的私聊记录流 (用于 AI 观察上下文，不涉及进度)"""
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT role, content, timestamp
+                FROM private_messages 
+                WHERE user_id = ?
                 ORDER BY timestamp DESC
                 LIMIT ?
-            ''', (sender_id, limit))
-            # 注意：LLM 习惯按时间顺序看
+            ''', (user_id, limit))
             rows = [dict(row) for row in cursor.fetchall()]
             rows.reverse()
             return rows
+
+    def clear_private_messages(self, user_id):
+        """清空指定用户的私聊历史 (通常在总结完成后调用)"""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM private_messages WHERE user_id = ?', (user_id,))
+            conn.commit()
 
     # --- 全局配置相关操作 ---
 

@@ -310,61 +310,18 @@ class ActiveMessageHandler:
             memory_data = short_data
         system_prompt = await self._get_system_prompt()
         
-        # 获取最近的私聊对话上下文
+        # 获取最近的私聊对话上下文 (改用数据库拉取)
         conversation_context = ""
-        unified_origin = self.user_unified_origin
-        if not unified_origin:
-             # 如果还没收到过消息，尝试在数据库中寻找包含该用户 ID 的会话
-             specific_user_id = self.plugin.config.get("specific_user_id")
-             if specific_user_id:
-                 try:
-                     # 优先尝试常见的几种拼凑方式
-                     possible_origins = [
-                         f"aiocqhttp:person:{specific_user_id}",
-                         f"onebot:person:{specific_user_id}",
-                         f"qq_official:person:{specific_user_id}"
-                     ]
-                     
-                     for po in possible_origins:
-                         temp_cid = await self.context.conversation_manager.get_curr_conversation_id(po)
-                         if temp_cid:
-                             unified_origin = po
-                             break
-                     
-                     if not unified_origin:
-                         # 最后的兜底：遍历所有近期会话寻找匹配项
-                         all_convs = await self.context.conversation_manager.get_filtered_conversations(page_size=100)
-                         for conv_obj, _cnt in [all_convs] if isinstance(all_convs, tuple) else [(all_convs, 0)]:
-                             for c in conv_obj:
-                                 if str(specific_user_id) in c.user_id:
-                                     unified_origin = c.user_id
-                                     break
-                             if unified_origin: break
-                 except Exception as e:
-                     logger.error(f"ActiveMessageHandler: 自动搜索会话来源失败: {e}")
-        
-        logger.info(f"ActiveMessageHandler: 确定的会话来源为: {unified_origin}")
-        
-        cid = None
-        if unified_origin:
+        specific_user_id = self.plugin.config.get("specific_user_id")
+        if specific_user_id:
             try:
-                cid = await self.context.conversation_manager.get_curr_conversation_id(unified_origin)
-                logger.info(f"ActiveMessageHandler: 获取到的对话 ID (cid): {cid}")
-                if cid:
-                    conv = await self.context.conversation_manager.get_conversation(unified_origin, cid)
-                    if conv:
-                        history = json.loads(conv.history)
-                        # 取最近 10 条
-                        recent = history[-10:]
-                        for m in recent:
-                            role = "用户" if m["role"] == "user" else "你"
-                            raw_content = m.get("content", "")
-                            content = self._clean_message_content(raw_content)
-                            if content:
-                                conversation_context += f"{role}: {content}\n"
-                        logger.info(f"ActiveMessageHandler: 成功提取到 {len(recent)} 条对话上下文。")
+                messages = self.db.get_recent_private_messages(str(specific_user_id), limit=10)
+                for m in messages:
+                    role_label = "用户" if m["role"] == "user" else "你"
+                    conversation_context += f"{role_label}: {m['content']}\n"
+                logger.info(f"ActiveMessageHandler: 成功从数据库提取到 {len(messages)} 条对话上下文。")
             except Exception as e:
-                logger.error(f"ActiveMessageHandler: 获取对话上下文失败: {e}")
+                logger.error(f"ActiveMessageHandler: 从数据库获取对话上下文失败: {e}")
 
         gen_prompt = f"""任务目标：根据你的人设以及下面的角色实时状态与历史记忆档案，主动给用户发一条消息。
 当前的发送动机是：{reason}
@@ -400,19 +357,27 @@ class ActiveMessageHandler:
         logger.info(f"ActiveMessageHandler: 生成主动消息：{message_content}")
 
         # 发送消息
-        specific_user_id = self.plugin.config.get("specific_user_id")
         if specific_user_id:
             try:
                 from astrbot.core.message.message_event_result import MessageChain
 
                 chain = MessageChain().message(message_content)
-                # 这里我们假设用户是以私聊为主，目标是 specific_user_id
+                # 优先使用实时探测到的来源，否则保底使用特定平台
+                target_platform = "aiocqhttp"
+                if self.user_unified_origin and ":" in self.user_unified_origin:
+                    target_platform = self.user_unified_origin.split(":")[0]
+
                 await StarTools.send_message_by_id(
                     type="FriendMessage",
                     id=specific_user_id,
                     message_chain=chain,
-                    platform="aiocqhttp",
+                    platform=target_platform,
                 )
+                
+                # 记录到数据库
+                self.db.add_private_message(str(specific_user_id), "bot", message_content, datetime.now().timestamp())
+                
+                logger.info(f"ActiveMessageHandler: 成功发送主动关心消息并记录至数据库。")
                 logger.info("ActiveMessageHandler: 主动消息发送成功。")
                 
                 # 记录到对话历史中
