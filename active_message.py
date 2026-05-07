@@ -442,7 +442,7 @@ class ActiveMessageHandler:
                     target_platform = raw_platform
 
             if use_group:
-                chain = MessageChain().chain([At(qq=specific_user_id), Plain(f" {message_content}")])
+                chain = MessageChain(chain=[At(qq=specific_user_id), Plain(f" {message_content}")])
                 await StarTools.send_message_by_id(
                     type="GroupMessage",
                     id=target_group_id,
