@@ -8,7 +8,7 @@ async def get_bot_nickname(
     context, event: AstrMessageEvent, group_id: str, bot_nicknames: dict
 ) -> str:
     """获取机器人在群组中的昵称"""
-    if group_id in bot_nicknames:
+    if group_id in bot_nicknames and bot_nicknames[group_id] != "机器人":
         return bot_nicknames[group_id]
 
     if event:

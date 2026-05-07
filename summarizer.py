@@ -302,7 +302,7 @@ class Summarizer:
 
             payload_dict = {
                 "时间": first_time,
-                "用户": user_content or "（机器人主动发起）",
+                "用户": user_content or "（你主动发起）",
                 "你的回复": bot_content,
             }
         else:
