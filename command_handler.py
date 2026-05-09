@@ -45,7 +45,7 @@ class CommandHandler:
             yield event.plain_result(self._get_resp("resp_invalid_date"))
             return
 
-        yield event.plain_result(self._get_resp("resp_daily_loading", date=date))
+
 
         report_url = f"{self.api_service.base_url}/d/{self.api_service.display_code}/report/{date}"
         

@@ -74,11 +74,7 @@
     "type": "string",
     "default": "呜哇，任务失败了。爱丽丝无法识别这个日期格式，请使用 YYYY-MM-DD 格式（例如：stillalive日报 2026-05-03）再试一次吧！"
   },
-  "resp_daily_loading": {
-    "description": "回复：正在获取日报",
-    "type": "string",
-    "default": "爱丽丝收到任务！正在努力同步 {date} 的冒险日志，请老师稍等一下哦！"
-  },
+
   "resp_daily_not_found": {
     "description": "回复：日报未找到",
     "type": "string",
