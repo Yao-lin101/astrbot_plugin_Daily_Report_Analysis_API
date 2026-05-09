@@ -4,9 +4,10 @@ from astrbot.api import logger
 
 
 class APIService:
-    def __init__(self, base_url: str, character_key: str):
+    def __init__(self, base_url: str, character_key: str, display_code: str = "e.e."):
         self.base_url = base_url.rstrip("/")
         self.character_key = character_key
+        self.display_code = display_code
 
     async def send_data(self, endpoint: str, data: dict):
         """发送数据到目标API"""
@@ -31,8 +32,8 @@ class APIService:
 
     async def fetch_report(self, date: str):
         """获取日报详情"""
-        # 路径: /api/v1/d/e.e./reports/detail/?date=...
-        url = f"{self.base_url}/api/v1/d/e.e./reports/detail/?date={date}"
+        # 路径: /api/v1/d/{display_code}/reports/detail/?date=...
+        url = f"{self.base_url}/api/v1/d/{self.display_code}/reports/detail/?date={date}"
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as response:

@@ -104,7 +104,8 @@ class DailyReportAnalysisAPI(Star):
         # 初始化 API 服务
         target_url = self.config.get("target_url", "")
         character_key = self.config.get("character_key", "")
-        self.api_service = APIService(target_url, character_key)
+        display_code = self.config.get("display_code", "")
+        self.api_service = APIService(target_url, character_key, display_code)
 
         # 初始化组件
         self.summarizer = Summarizer(self)

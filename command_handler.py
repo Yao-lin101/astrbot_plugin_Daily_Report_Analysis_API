@@ -5,7 +5,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import Image, Node, Nodes, Plain
 
-from .report_handler import ReportHandler
+
 
 
 class CommandHandler:
@@ -47,6 +47,9 @@ class CommandHandler:
 
         yield event.plain_result(self._get_resp("resp_daily_loading", date=date))
 
+        report_url = f"{self.api_service.base_url}/d/{self.api_service.display_code}/report/{date}"
+        
+        # 验证报告是否存在
         report_data = await self.api_service.fetch_report(date)
         if not report_data:
             yield event.plain_result(self._get_resp("resp_daily_conn_error", date=date))
@@ -64,68 +67,8 @@ class CommandHandler:
                 )
             return
 
-        image_path = await ReportHandler.render_report(report_data)
-        if image_path:
-            p = Path(image_path)
-            if p.exists():
-                try:
-                    chain = event.chain_result([Image.fromFileSystem(str(p))])
-                    await event.send(chain)
-                except Exception as e:
-                    logger.error(f"DailyReport: 图片发送失败，尝试发送转发文本: {e}")
-                    report_text = (
-                        report_data.get("markdown")
-                        or report_data.get("report_md")
-                        or report_data.get("report_markdown")
-                    )
-
-                    if not report_text and "report_html" in report_data:
-                        import re
-
-                        html = report_data["report_html"]
-                        html = re.sub(r"<(br|p|div|li|h[1-6])[^>]*>", "\n", html)
-                        html = re.sub(r"</(p|div|li|h[1-6])>", "\n", html)
-                        report_text = re.sub(r"<[^>]+>", "", html)
-                        report_text = report_text.replace("&nbsp;", " ").strip()
-                        report_text = re.sub(r"\n\s*\n", "\n\n", report_text)
-
-                    if report_text:
-                        bot_id = str(
-                            getattr(event, "robot_id", getattr(event, "self_id", "0"))
-                        )
-                        try:
-                            logger.info(
-                                f"DailyReport: 正在尝试发送合并转发消息 (内容长度: {len(report_text)})"
-                            )
-                            node = Node(content=[Plain(report_text)])
-                            node.name = "甜筒爱丽丝"
-                            node.uin = bot_id
-                            nodes = Nodes(nodes=[node])
-                            await event.send(event.chain_result([nodes]))
-                            logger.info("DailyReport: 合并转发报告发送成功")
-                            return
-                        except Exception as e_node:
-                            logger.error(
-                                f"DailyReport: 合并转发发送失败 ({e_node})，尝试直接发送纯文本报告"
-                            )
-                            try:
-                                await event.send(event.plain_result(report_text))
-                                return
-                            except Exception as e_plain:
-                                logger.error(
-                                    f"DailyReport: 纯文本回退发送也失败了: {e_plain}"
-                                )
-
-                    yield event.plain_result(
-                        self._get_resp(
-                            "resp_image_transmit_error",
-                            error="图片发送失败，且文本回退发送均未成功。",
-                        )
-                    )
-            else:
-                yield event.plain_result(self._get_resp("resp_image_file_not_found"))
-        else:
-            yield event.plain_result(self._get_resp("resp_render_error"))
+        # 直接回复 URL
+        yield event.plain_result(self._get_resp("resp_daily_success", date=date, url=report_url))
 
     async def force_private_summary(self, event: AstrMessageEvent):
         """手动强制触发私聊记录的总结与上报"""
