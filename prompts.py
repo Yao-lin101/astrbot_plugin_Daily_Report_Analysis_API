@@ -56,7 +56,7 @@ ACTIVE_MSG_CHECK_STATUS_PROMPT = """任务目标：结合当前时间、用户�
 {{
   "need_message": true,
   "message_type": "chat", // "care" 或 "chat"
-  "reason": "详细说明你的判定逻辑，例如：'识别到用户在 00:04 说了晚安，当前 00:30 步数为 0，判定已入睡，设置 120 分钟后再观察'。",
+  "reason": "请以你的人设口吻，详细且自然地说明你的判定逻辑（50字以内）。",
   "delay_minutes": 0 // 整数。必须填写！若决定立即观望请填 0，基于当前系统时间计算。
 }}
 
@@ -72,7 +72,7 @@ ACTIVE_MSG_PREDICT_TIME_PROMPT = """任务目标：根据以下角色的历史�
 
 输出 JSON 格式要求（必须只返回合法的 JSON 对象，不带 Markdown 符号等包裹）：
 {{
-  "reason": "根据历史记录，用户通常在早上 8 点左右开始活跃",
+  "reason": "以你的人设口吻，说明你的推测依据...'）",
   "next_check_time": "08:00" // 格式为 HH:MM，24小时制
 }}
 
