@@ -281,30 +281,43 @@ class ActiveMessageHandler:
                 logger.info(
                     f"ActiveMessageHandler: 判定需要发消息，类型：{message_type}，理由：{reason}。准备生成回复..."
                 )
+                self.db.add_active_message_decision(
+                    True, message_type, reason, 0, datetime.now().isoformat()
+                )
                 await self._generate_and_send_message(reason, message_type, status_data)
                 return True
             else:
                 delay_minutes = result_json.get("delay_minutes", 0)
-                if (
-                    delay_minutes
-                    and isinstance(delay_minutes, (int, float))
-                    and delay_minutes > 0
-                ):
-                    try:
-                        now = datetime.now()
-                        self.next_check_time = now + timedelta(
-                            minutes=int(delay_minutes)
-                        )
-                        self.db.update_plugin_meta(
-                            "active_msg_next_check_time",
-                            self.next_check_time.isoformat(),
-                        )
-                        logger.info(
-                            f"ActiveMessageHandler: 遵循模型建议，将在 {delay_minutes} 分钟后（{self.next_check_time}）再次观察 (理由: {reason})"
-                        )
-                        return False
-                    except Exception as e:
-                        logger.debug(f"应用延迟时间失败: {e}")
+                try:
+                    now = datetime.now()
+                    delay_val = int(delay_minutes)
+
+                    # 增加一层代码逻辑兜底：单次建议延迟最长不超过 6 小时 (360分钟)
+                    # 以防止模型出现异常计算导致失联一整天
+                    safe_delay = min(delay_val, 360)
+
+                    self.next_check_time = now + timedelta(minutes=safe_delay)
+
+                    self.db.update_plugin_meta(
+                        "active_msg_next_check_time",
+                        self.next_check_time.isoformat(),
+                    )
+                    
+                    # 记录决策到数据库
+                    self.db.add_active_message_decision(
+                        False, message_type, reason, safe_delay, self.next_check_time.isoformat()
+                    )
+                    
+                    logger.info(
+                        f"ActiveMessageHandler: 遵循模型建议，将在 {safe_delay} 分钟后（{self.next_check_time}）再次观察 (理由: {reason}{' [已截断]' if safe_delay < delay_val else ''})"
+                    )
+                    return False
+                except Exception as e:
+                    logger.debug(f"应用延迟时间失败: {e}")
+                    # 如果应用延迟失败，也记录一下
+                    self.db.add_active_message_decision(
+                        False, message_type, f"Error: {e}. Original Reason: {reason}", 0, datetime.now().isoformat()
+                    )
 
                 logger.info("ActiveMessageHandler: 判定不需要发消息。")
                 return False

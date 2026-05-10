@@ -57,6 +57,18 @@ class Storage:
                     value TEXT
                 )
             """)
+            # 5. 主动消息决策日志表
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS active_message_decision_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL,
+                    need_message INTEGER, -- 0: 否, 1: 是
+                    message_type TEXT, -- 'care', 'chat'
+                    reason TEXT,
+                    delay_minutes INTEGER,
+                    next_check_time TEXT
+                )
+            """)
 
             # --- 热更新检查：补齐缺失字段 ---
             cursor.execute("PRAGMA table_info(group_meta)")
@@ -320,3 +332,34 @@ class Storage:
                 (key, str(value)),
             )
             conn.commit()
+
+    def add_active_message_decision(
+        self, need_message, message_type, reason, delay_minutes, next_check_time
+    ):
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO active_message_decision_logs (timestamp, need_message, message_type, reason, delay_minutes, next_check_time)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    datetime.now().timestamp(),
+                    1 if need_message else 0,
+                    message_type,
+                    reason,
+                    delay_minutes,
+                    next_check_time,
+                ),
+            )
+            conn.commit()
+
+    def get_recent_active_message_decisions(self, limit=10):
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM active_message_decision_logs ORDER BY timestamp DESC LIMIT ?",
+                (limit,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
