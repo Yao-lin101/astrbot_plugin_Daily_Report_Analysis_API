@@ -286,11 +286,15 @@ class DailyReportAnalysisAPI(Star):
                 self.group_messages_map.get(group_id),
                 self.bot_nicknames,
             )
+            is_it_you = sender_id == specific_user_id
+            # 判定是否产生了直接互动（私聊，或者群聊中 At/回复/唤醒机器人）
             is_interacted = not event.message_obj.group_id or getattr(event, "is_at_or_wake_command", False)
-            is_specific_user = (sender_id == specific_user_id) and is_interacted
             
-            prefix = "【用户】" if is_specific_user else "【群友】"
-            if is_specific_user:
+            # 标签固定为【用户】，但数据库标记 is_specific_user 仅在有互动时为 1
+            prefix = "【用户】" if is_it_you else "【群友】"
+            is_specific_user = is_it_you and is_interacted
+            
+            if is_it_you:
                 self.user_nicknames[group_id] = sender_name
 
             self.message_id_counter[group_id] += 1
