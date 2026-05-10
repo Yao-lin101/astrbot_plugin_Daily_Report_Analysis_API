@@ -286,7 +286,9 @@ class DailyReportAnalysisAPI(Star):
                 self.group_messages_map.get(group_id),
                 self.bot_nicknames,
             )
-            is_specific_user = sender_id == specific_user_id
+            is_interacted = not event.message_obj.group_id or getattr(event, "is_at_or_wake_command", False)
+            is_specific_user = (sender_id == specific_user_id) and is_interacted
+            
             prefix = "【用户】" if is_specific_user else "【群友】"
             if is_specific_user:
                 self.user_nicknames[group_id] = sender_name
