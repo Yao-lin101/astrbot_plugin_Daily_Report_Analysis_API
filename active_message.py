@@ -254,12 +254,20 @@ class ActiveMessageHandler:
         # 获取最近对话上下文
         conversation_context = await self._get_recent_conversation_context(limit=10)
 
+        config = self.plugin.config or {}
+        min_int = config.get("active_msg_min_interval", 30)
+        max_int = config.get("active_msg_max_interval", 60)
+
         system_prompt = await self._get_system_prompt()
         prompt = ACTIVE_MSG_CHECK_STATUS_PROMPT.format(
             current_time=current_time,
             status_data=status_data,
             conversation_context=conversation_context,
+            min_interval=min_int,
+            max_interval=max_int,
         )
+
+        logger.info(f"ActiveMessageHandler: 评估提示词详情:\n---\n{prompt}\n---")
 
         provider_id = self.plugin.config.get("summary_provider_id")
         if not provider_id:
@@ -370,7 +378,7 @@ class ActiveMessageHandler:
 
             context_lines = []
             for m in messages:
-                role_label = "用户" if m["role"] == "user" else "你"
+                role_label = "【用户】" if m["role"] == "user" else "【你】"
                 ts = m.get("timestamp")
                 time_prefix = ""
                 if ts:
@@ -380,7 +388,7 @@ class ActiveMessageHandler:
                 
                 content = m["content"]
                 # 统一格式：去除可能存在的 【用户】Nickname: 或 【你】Nickname: 前缀，实现合并后无额外标注
-                # 这样无论是私聊还是群聊，在上下文中都呈现为 "用户: ..." 或 "你: ..."
+                # 这样无论是私聊还是群聊，在上下文中都呈现为 "【用户】: ..." 或 "【你】: ..."
                 clean_content = re.sub(r"^【.*?】.*?: ", "", content)
                 context_lines.append(f"{time_prefix}{role_label}: {clean_content}")
             return "\n".join(context_lines)
