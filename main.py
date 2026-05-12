@@ -42,6 +42,8 @@ class DailyReportAnalysisAPI(Star):
         self.active_groups = set()
 
         self.private_timer = None
+        self.private_task_id = 0 # 追踪私聊总结任务 ID
+        self.group_task_ids = defaultdict(int) # 追踪群聊总结任务 ID
         self.config = config
 
         # 初始化数据库
@@ -338,16 +340,22 @@ class DailyReportAnalysisAPI(Star):
                     self.active_groups.add(group_id)
                     if group_id in self.group_timers:
                         self.group_timers[group_id].cancel()
+                    
+                    self.group_task_ids[group_id] += 1
+                    current_task_id = self.group_task_ids[group_id]
                     self.group_timers[group_id] = asyncio.create_task(
-                        self._delay_summarize_task(group_id, 1800)
+                        self._delay_summarize_task(group_id, 1800, current_task_id)
                     )
         else:
             if sender_id == specific_user_id:
                 self.db.add_private_message(sender_id, "user", message_content, now)
                 if self.private_timer:
                     self.private_timer.cancel()
+                
+                self.private_task_id += 1
+                current_task_id = self.private_task_id
                 self.private_timer = asyncio.create_task(
-                    self._delay_private_summary_task(600)
+                    self._delay_private_summary_task(600, current_task_id)
                 )
 
     @filter.after_message_sent()
@@ -367,8 +375,11 @@ class DailyReportAnalysisAPI(Star):
                 )
                 if self.private_timer:
                     self.private_timer.cancel()
+                
+                self.private_task_id += 1
+                current_task_id = self.private_task_id
                 self.private_timer = asyncio.create_task(
-                    self._delay_private_summary_task(600)
+                    self._delay_private_summary_task(600, current_task_id)
                 )
         else:
             group_id = event.message_obj.group_id
@@ -408,24 +419,30 @@ class DailyReportAnalysisAPI(Star):
                 {"id": msg_id, "content": msg_content_formatted, "sender_id": "bot"}
             )
 
-    async def _delay_summarize_task(self, group_id, delay):
+    async def _delay_summarize_task(self, group_id, delay, task_id):
         try:
             await asyncio.sleep(delay)
+            if self.group_task_ids.get(group_id) != task_id:
+                return
             await self.summarizer.summarize_single_group(group_id)
         except asyncio.CancelledError:
             pass
         except Exception as e:
             logger.error(f"DailyReportAnalysisAPI: 延迟总结任务出错: {e}")
         finally:
-            self.group_timers.pop(group_id, None)
+            if self.group_task_ids.get(group_id) == task_id:
+                self.group_timers.pop(group_id, None)
 
-    async def _delay_private_summary_task(self, delay: int):
+    async def _delay_private_summary_task(self, delay: int, task_id: int):
         try:
             await asyncio.sleep(delay)
+            if self.private_task_id != task_id:
+                return
             await self.summarizer.summarize_private_messages()
         except asyncio.CancelledError:
             pass
         except Exception as e:
             logger.error(f"DailyReportAnalysisAPI: 私聊延迟总结任务出错: {e}")
         finally:
-            self.private_timer = None
+            if self.private_task_id == task_id:
+                self.private_timer = None
