@@ -243,22 +243,35 @@ class DailyReportAnalysisAPI(Star):
     async def on_all_message(self, event: AstrMessageEvent):
         sender_id = str(event.get_sender_id())
         specific_user_id = str(self.config.get("specific_user_id", ""))
+        group_id = event.message_obj.group_id
+
+        # 1. 预解析消息内容并清洗
+        message_content = await format_full_message(
+            self.context,
+            event,
+            self.group_messages_map.get(group_id) if group_id else None,
+            self.bot_nicknames,
+        )
+
+        # 2. 过滤掉空消息（如：正在输入状态、特殊插件事件等没有实质内容的“消息”）
+        if not message_content or not message_content.strip():
+            return
+
+        # 3. 拦截内部指令，不记录到上下文
+        if any(cmd in event.message_str for cmd in self.internal_commands):
+            return
 
         # 当特定用户发言时（无论私聊还是群聊），重置主动消息的轮询计时器并更新活跃状态
         if specific_user_id and sender_id == specific_user_id:
             if self.active_message_handler:
                 # 只有私聊才强制重置 polling（推迟主动找人）。群聊仅更新位置/时间，不推迟计时，
                 # 这样如果用户在群里活跃，主动消息依然可以按原计划触发并发送到群里。
-                if not event.message_obj.group_id or getattr(event, "is_at_or_wake_command", False):
+                if not group_id or getattr(event, "is_at_or_wake_command", False):
                     self.active_message_handler.reset_polling(reason="用户活跃(互动)")
-                
-                self.active_message_handler.update_user_activity(
-                    group_id=event.message_obj.group_id,
-                    unified_origin=event.unified_msg_origin
-                )
 
-        if any(cmd in event.message_str for cmd in self.internal_commands):
-            return
+                self.active_message_handler.update_user_activity(
+                    group_id=group_id, unified_origin=event.unified_msg_origin
+                )
 
         if event.message_obj.group_id and self.config.get("group_whitelist"):
             if str(event.message_obj.group_id) not in [
@@ -280,12 +293,6 @@ class DailyReportAnalysisAPI(Star):
             if group_id not in self.last_summarized_id:
                 self._get_group_context(group_id)
 
-            message_content = await format_full_message(
-                self.context,
-                event,
-                self.group_messages_map.get(group_id),
-                self.bot_nicknames,
-            )
             is_it_you = sender_id == specific_user_id
             # 判定是否产生了直接互动（私聊，或者群聊中 At/回复/唤醒机器人）
             is_interacted = not event.message_obj.group_id or getattr(event, "is_at_or_wake_command", False)
@@ -336,9 +343,6 @@ class DailyReportAnalysisAPI(Star):
                     )
         else:
             if sender_id == specific_user_id:
-                message_content = await format_full_message(
-                    self.context, event, bot_nicknames=self.bot_nicknames
-                )
                 self.db.add_private_message(sender_id, "user", message_content, now)
                 if self.private_timer:
                     self.private_timer.cancel()
