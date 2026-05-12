@@ -484,7 +484,11 @@ class DailyReportAnalysisAPI(Star):
                 text = part.get("text", "")
             elif hasattr(part, "text"):
                 text = part.text
+            
             if text:
+                # 剔除 system_reminder 部分，避免重复注入
+                if "<system_reminder>" in text:
+                    continue
                 full_parts.append(text)
 
         if not full_parts:
