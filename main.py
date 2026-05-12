@@ -7,8 +7,9 @@ from datetime import datetime
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.message_components import At, Plain, Reply
+from astrbot.api.message_components import At, Plain, Reply, Image
 from astrbot.api.star import Context, Star, StarTools, register
+from astrbot.core.provider.entities import ProviderRequest
 
 from .active_message import ActiveMessageHandler
 from .api_service import APIService
@@ -310,7 +311,7 @@ class DailyReportAnalysisAPI(Star):
             msg_id = self.message_id_counter[group_id]
             msg_content_formatted = f"{prefix}{sender_name}: {message_content}"
 
-            self.db.add_group_message(
+            row_id = self.db.add_group_message(
                 group_id,
                 msg_id,
                 sender_id,
@@ -320,6 +321,9 @@ class DailyReportAnalysisAPI(Star):
                 event.message_obj.message_id,
                 is_specific_user=is_specific_user,
             )
+            event.set_extra("report_db_row_id", row_id)
+            event.set_extra("report_db_table", "group_messages")
+            event.set_extra("report_prefix", f"{prefix}{sender_name}: ")
             meta_update = {"group_name": group_name, "message_id_counter": msg_id}
             if is_specific_user:
                 meta_update["user_nickname"] = sender_name
@@ -348,7 +352,10 @@ class DailyReportAnalysisAPI(Star):
                     )
         else:
             if sender_id == specific_user_id:
-                self.db.add_private_message(sender_id, "user", message_content, now)
+                row_id = self.db.add_private_message(sender_id, "user", message_content, now)
+                event.set_extra("report_db_row_id", row_id)
+                event.set_extra("report_db_table", "private_messages")
+                event.set_extra("report_prefix", "")
                 if self.private_timer:
                     self.private_timer.cancel()
                 
@@ -366,6 +373,10 @@ class DailyReportAnalysisAPI(Star):
         reply_text = result.get_plain_text()
         if not reply_text:
             return
+
+        # 检查是否包含推理过程
+        if hasattr(result, 'reasoning_content') and result.reasoning_content:
+            reply_text = f"<reasoning>\n{result.reasoning_content}\n</reasoning>\n{reply_text}"
 
         if not event.message_obj.group_id:
             specific_user_id = str(self.config.get("specific_user_id", ""))
@@ -446,3 +457,40 @@ class DailyReportAnalysisAPI(Star):
         finally:
             if self.private_task_id == task_id:
                 self.private_timer = None
+
+    @filter.on_llm_request()
+    async def on_llm_request(self, event: AstrMessageEvent, request: ProviderRequest):
+        """
+        当 LLM 请求发起时，更新数据库中的消息内容。
+        此时消息已经经过了图片转述、引用回复处理等，内容更加丰富。
+        """
+        row_id = event.get_extra("report_db_row_id")
+        table_name = event.get_extra("report_db_table")
+        if not row_id or not table_name:
+            return
+
+        # 只有包含图片或文件时才更新，避免普通文本消息重复处理（虽然处理了也没事）
+        has_media = any(isinstance(comp, Image) for comp in event.message_obj.message)
+        if not has_media:
+            return
+
+        full_parts = []
+        if request.prompt and request.prompt != "<attachment>":
+            full_parts.append(request.prompt)
+
+        for part in request.extra_user_content_parts:
+            text = ""
+            if isinstance(part, dict):
+                text = part.get("text", "")
+            elif hasattr(part, "text"):
+                text = part.text
+            if text:
+                full_parts.append(text)
+
+        if not full_parts:
+            return
+
+        rich_content = "\n".join(full_parts)
+        prefix = event.get_extra("report_prefix") or ""
+        self.db.update_message_content(table_name, row_id, f"{prefix}{rich_content}")
+        logger.debug(f"DailyReportAnalysisAPI: 已更新消息 ID {row_id} 的富文本内容。")

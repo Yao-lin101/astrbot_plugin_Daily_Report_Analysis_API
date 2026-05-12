@@ -206,6 +206,19 @@ class Storage:
                 ),
             )
             conn.commit()
+            return cursor.lastrowid
+
+    def update_message_content(self, table_name, row_id, new_content):
+        """更新指定表中的消息内容"""
+        if table_name not in ["group_messages", "private_messages"]:
+            return
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"UPDATE {table_name} SET content = ? WHERE id = ?",
+                (new_content, row_id),
+            )
+            conn.commit()
 
     def get_pending_messages(self, group_id, last_id, limit=100):
         """获取尚未总结的消息"""
@@ -247,6 +260,7 @@ class Storage:
                 (user_id, role, content, timestamp),
             )
             conn.commit()
+            return cursor.lastrowid
 
     def get_pending_private_messages(self, user_id, last_id, limit=50):
         """获取尚未总结的私聊消息流"""
