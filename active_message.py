@@ -69,7 +69,6 @@ class ActiveMessageHandler:
         if self.loop_task:
             self.loop_task.cancel()
         self.loop_task = asyncio.create_task(self._main_loop())
-        logger.info("DailyReportAnalysisAPI: 主动消息机制已启动。")
 
     def stop(self):
         if self.loop_task:
@@ -77,11 +76,19 @@ class ActiveMessageHandler:
             self.loop_task = None
 
     async def _main_loop(self):
+        last_enabled = None
         try:
             while True:
                 config = self.plugin.config or {}
                 enabled = config.get("enable_active_messaging", False)
                 max_msgs = config.get("max_active_messages_per_day", 3)
+
+                if enabled and last_enabled is not True:
+                    logger.info("ActiveMessageHandler: 主动消息检测机制已激活。")
+                elif not enabled and last_enabled is True:
+                    logger.info("ActiveMessageHandler: 主动消息检测机制已停止。")
+                
+                last_enabled = enabled
 
                 if not enabled:
                     await asyncio.sleep(60)
@@ -138,6 +145,8 @@ class ActiveMessageHandler:
 
     def reset_polling(self, min_int=None, max_int=None, reason="互动"):
         config = self.plugin.config or {}
+        if not config.get("enable_active_messaging", False):
+            return
         min_interval = (
             min_int
             if min_int is not None
