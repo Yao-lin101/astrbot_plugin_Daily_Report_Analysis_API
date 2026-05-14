@@ -221,11 +221,16 @@ class ActiveMessageHandler:
             self.next_check_time = now + timedelta(minutes=60)
             return
 
-        response = await self.context.llm_generate(
-            chat_provider_id=provider_id,
-            system_prompt=system_prompt,
-            prompt=prompt,
-        )
+        try:
+            response = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                system_prompt=system_prompt,
+                prompt=prompt,
+            )
+        except Exception as e:
+            logger.warning(f"ActiveMessageHandler: 推测活跃时间时 LLM 请求失败: {e}")
+            self.next_check_time = now + timedelta(minutes=60)
+            return
 
         try:
             result_json = self._parse_json(response.completion_text)
@@ -282,11 +287,15 @@ class ActiveMessageHandler:
         if not provider_id:
             return False
 
-        response = await self.context.llm_generate(
-            chat_provider_id=provider_id,
-            system_prompt=system_prompt,
-            prompt=prompt,
-        )
+        try:
+            response = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                system_prompt=system_prompt,
+                prompt=prompt,
+            )
+        except Exception as e:
+            logger.warning(f"ActiveMessageHandler: 评估状态时 LLM 请求失败: {e}")
+            return False
 
         try:
             result_json = self._parse_json(response.completion_text)
@@ -443,11 +452,15 @@ class ActiveMessageHandler:
             gen_prompt += f"\n\n注意：这条消息将发送到群聊（{target_group_id}）并 @ 用户，请以此氛围回复。"
 
         provider_id = self.plugin.config.get("summary_provider_id")
-        response = await self.context.llm_generate(
-            chat_provider_id=provider_id,
-            system_prompt=system_prompt,
-            prompt=gen_prompt,
-        )
+        try:
+            response = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                system_prompt=system_prompt,
+                prompt=gen_prompt,
+            )
+        except Exception as e:
+            logger.error(f"ActiveMessageHandler: 生成主动消息时 LLM 请求失败: {e}")
+            return
 
         message_content = response.completion_text.strip()
         if not message_content:
