@@ -224,21 +224,46 @@ class Summarizer:
         if not messages:
             return False
 
-        # 组装对话文本用于 LLM
+        # Assemble dialogue text for LLM, including timestamps
         dialogue_text = ""
         user_msgs = []
         for m in messages:
             role_label = "用户" if m["role"] == "user" else "你"
-            dialogue_text += f"{role_label}: {m['content']}\n"
+            msg_time = datetime.fromtimestamp(m["timestamp"]).strftime("%Y-%m-%d %H:%M")
+            dialogue_text += f"[{msg_time}] {role_label}: {m['content']}\n"
             if m["role"] == "user":
                 user_msgs.append(m["content"])
 
-        # 如果这段记录中没有任何用户发言，则暂不上报（等待用户回复后形成对话再总结）
+        # If there are no user messages in this batch, skip report
         if not user_msgs:
             logger.info(
                 "DailyReportAnalysisAPI: 当前私聊记录中无用户消息，跳过本次上报。"
             )
             return False
+
+        # Calculate time gap if there is a bot message followed by user response
+        has_time_gap = False
+        gap_str = ""
+        if len(messages) >= 2:
+            first_msg = messages[0]
+            # Find the first user reply
+            for m in messages[1:]:
+                if m["role"] == "user":
+                    time_gap = m["timestamp"] - first_msg["timestamp"]
+                    if time_gap >= 600:  # 10 minutes or more
+                        has_time_gap = True
+                        # Format the gap duration
+                        gap_minutes = int(time_gap / 60)
+                        if gap_minutes >= 60:
+                            gap_hours = gap_minutes // 60
+                            rem_minutes = gap_minutes % 60
+                            if rem_minutes > 0:
+                                gap_str = f"{gap_hours}小时{rem_minutes}分钟"
+                            else:
+                                gap_str = f"{gap_hours}小时"
+                        else:
+                            gap_str = f"{gap_minutes}分钟"
+                    break
 
         first_time = datetime.fromtimestamp(messages[0]["timestamp"]).strftime("%H:%M")
         provider_id = self.config.get("summary_provider_id")
@@ -246,12 +271,13 @@ class Summarizer:
         summary_topic = ""
         summary_content = ""
 
-        if len(messages) <= 2:
-            # 对话较短，直接拼接
+        # Bypass short dialogue shortcut if bot-initiated and has significant time gap to let LLM summarize it
+        if len(messages) <= 2 and not (messages[0]["role"] == "bot" and has_time_gap):
+            # Short dialogue, direct concatenation
             summary_topic = "私聊互动"
             summary_content = " / ".join(user_msgs)
         else:
-            # 多轮对话，调用 LLM 进行压缩精简
+            # Long dialogue or bypassed short dialogue, call LLM to summarize
             if provider_id:
                 try:
                     persona_id = self.config.get("plugin_specific_persona_id")
@@ -278,7 +304,7 @@ class Summarizer:
                     )
 
                     raw_result = response.completion_text.strip()
-                    # 清理 Markdown 标记
+                    # Clean Markdown formatting
                     if raw_result.startswith("```json"):
                         raw_result = raw_result[7:]
                     elif raw_result.startswith("```"):
@@ -297,8 +323,8 @@ class Summarizer:
                 except Exception as e:
                     logger.error(f"DailyReportAnalysisAPI: 私聊总结处理失败: {e}")
 
-        if len(messages) <= 2:
-            # 短对话：恢复原有的“问答对”格式
+        if len(messages) <= 2 and not (messages[0]["role"] == "bot" and has_time_gap):
+            # Short dialogue: restore the Q&A pair format
             user_content = ""
             bot_content = ""
             for m in messages:
@@ -313,10 +339,14 @@ class Summarizer:
                 "你的回复": bot_content,
             }
         else:
-            # 最终保底逻辑 (长对话)
+            # Final fallback/long dialogue logic
             if not summary_topic or not summary_content:
                 summary_topic = "私聊对话"
-                summary_content = " / ".join(user_msgs)[:100]
+                joined_content = " / ".join(user_msgs)[:100]
+                if messages[0]["role"] == "bot" and gap_str:
+                    summary_content = f"主动发送消息，用户在{gap_str}后回复：{joined_content}"
+                else:
+                    summary_content = joined_content
 
             payload_dict = {
                 "时间": first_time,
