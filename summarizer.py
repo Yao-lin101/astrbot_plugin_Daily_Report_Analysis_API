@@ -48,6 +48,7 @@ class Summarizer:
             logger.info(
                 f"DailyReportAnalysisAPI: 该批次待处理消息中无特定用户发言，安全推进进度至 ID={new_last_id}"
             )
+            self._check_and_trigger_next_backlog(group_id)
             return
 
         # 优化：向前追溯背景，避免无关消息干扰（保留用户首条发言前 15 条消息）
@@ -228,6 +229,21 @@ class Summarizer:
                 )
 
         self.plugin.active_groups.discard(group_id)
+        self._check_and_trigger_next_backlog(group_id)
+
+    def _check_and_trigger_next_backlog(self, group_id):
+        """检查是否有积压消息，并调度下一次总结"""
+        current_last_id = self.plugin.last_summarized_id.get(group_id, 0)
+        next_pending = self.db.get_pending_messages(group_id, current_last_id, limit=1)
+        if next_pending:
+            self.plugin.group_task_ids[group_id] += 1
+            current_task_id = self.plugin.group_task_ids[group_id]
+            self.plugin.group_timers[group_id] = asyncio.create_task(
+                self.plugin._delay_summarize_task(group_id, 2, current_task_id)
+            )
+            logger.info(
+                f"DailyReportAnalysisAPI: 发现群聊 {group_id} 仍有积压消息，已调度 2 秒后的增量总结任务。"
+            )
 
     async def summarize_private_messages(self):
         specific_user_id = str(self.config.get("specific_user_id", ""))
