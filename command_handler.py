@@ -98,7 +98,7 @@ class CommandHandler:
             yield event.plain_result(self._get_resp("resp_permission_denied"))
             return
 
-        group_id = event.message_obj.group_id
+        group_id = str(event.message_obj.group_id) if event.message_obj.group_id is not None else None
         if not group_id:
             yield event.plain_result(self._get_resp("resp_group_only"))
             return
@@ -140,7 +140,7 @@ class CommandHandler:
             yield event.plain_result(self._get_resp("resp_permission_denied"))
             return
 
-        group_id = event.message_obj.group_id
+        group_id = str(event.message_obj.group_id) if event.message_obj.group_id is not None else None
         if not group_id:
             yield event.plain_result(self._get_resp("resp_group_only"))
             return

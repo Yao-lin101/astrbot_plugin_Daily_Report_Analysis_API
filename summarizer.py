@@ -41,6 +41,13 @@ class Summarizer:
 
         if last_user_msg_index == -1:
             self.plugin.active_groups.discard(group_id)
+            # 安全推进进度，防止在没有特定用户发言的段落中卡死
+            new_last_id = pending[-1]["id"]
+            self.plugin.last_summarized_id[group_id] = new_last_id
+            self.db.update_group_meta(group_id, last_summarized_id=new_last_id)
+            logger.info(
+                f"DailyReportAnalysisAPI: 该批次待处理消息中无特定用户发言，安全推进进度至 ID={new_last_id}"
+            )
             return
 
         # 优化：向前追溯背景，避免无关消息干扰（保留用户首条发言前 15 条消息）
@@ -138,18 +145,25 @@ class Summarizer:
                     try:
                         next_start_id = int(next_start_id)
                     except (ValueError, TypeError):
-                        next_start_id = max_valid_id
+                        next_start_id = max_valid_id + 1
 
-                if next_start_id > max_valid_id:
+                if next_start_id > max_valid_id + 1:
                     logger.warning(
-                        f"DailyReportAnalysisAPI: LLM 返回的 ID {next_start_id} 超过上限 {max_valid_id}，已修正。"
+                        f"DailyReportAnalysisAPI: LLM 返回的 ID {next_start_id} 超过上限 {max_valid_id + 1}，已修正。"
                     )
-                    next_start_id = max_valid_id
+                    next_start_id = max_valid_id + 1
                 elif next_start_id < min_valid_id:
                     logger.warning(
                         f"DailyReportAnalysisAPI: LLM 返回的 ID {next_start_id} 低于下限 {min_valid_id}，已修正。"
                     )
-                    next_start_id = max_valid_id  # 默认移动到末尾，防止死循环
+                    next_start_id = max_valid_id + 1
+
+                # 如果状态是 ONGOING，且下个起始 ID 指向了批次外，说明判定有矛盾，修正为 min_valid_id
+                if status == "ONGOING" and next_start_id >= max_valid_id + 1:
+                    logger.warning(
+                        f"DailyReportAnalysisAPI: 判定状态为 ONGOING，但 next_start_id 指向批次外，修正为 min_valid_id {min_valid_id}。"
+                    )
+                    next_start_id = min_valid_id
                 # ------------------------------------------
 
                 logger.info(
@@ -160,11 +174,15 @@ class Summarizer:
                     to_summarize[-1]["timestamp"]
                 ).strftime("%H:%M")
 
+                # 由于底层查询使用 msg_id_in_group > last_summarized_id，
+                # 所以我们写入的 last_summarized_id 应该是 next_start_id - 1
+                new_progress_id = next_start_id - 1
+
                 if status == "COMPLETED" and topics:
                     # 只有在总结成功且有话题时，才更新进度
-                    self.plugin.last_summarized_id[group_id] = next_start_id
+                    self.plugin.last_summarized_id[group_id] = new_progress_id
                     self.db.update_group_meta(
-                        group_id, last_summarized_id=next_start_id
+                        group_id, last_summarized_id=new_progress_id
                     )
 
                     for t in topics:
@@ -187,15 +205,18 @@ class Summarizer:
                         await self.api_service.send_data("/api/v1/status/sync/", data)
 
                 # 更新进度
-                self.plugin.last_summarized_id[group_id] = next_start_id
-                self.db.update_group_meta(group_id, last_summarized_id=next_start_id)
+                self.plugin.last_summarized_id[group_id] = new_progress_id
+                self.db.update_group_meta(group_id, last_summarized_id=new_progress_id)
 
                 if status == "ONGOING":
                     # 主动重试（重新发起30分钟计时）
                     if group_id in self.plugin.group_timers:
                         self.plugin.group_timers[group_id].cancel()
+                    
+                    self.plugin.group_task_ids[group_id] += 1
+                    current_task_id = self.plugin.group_task_ids[group_id]
                     self.plugin.group_timers[group_id] = asyncio.create_task(
-                        self.plugin._delay_summarize_task(group_id, 1800)
+                        self.plugin._delay_summarize_task(group_id, 1800, current_task_id)
                     )
 
             except Exception as e:

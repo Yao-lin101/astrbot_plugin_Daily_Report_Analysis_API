@@ -246,7 +246,7 @@ class DailyReportAnalysisAPI(Star):
     async def on_all_message(self, event: AstrMessageEvent):
         sender_id = str(event.get_sender_id())
         specific_user_id = str(self.config.get("specific_user_id", ""))
-        group_id = event.message_obj.group_id
+        group_id = str(event.message_obj.group_id) if event.message_obj.group_id is not None else None
 
         # 1. 预解析消息内容并清洗
         message_content = await format_full_message(
@@ -289,7 +289,7 @@ class DailyReportAnalysisAPI(Star):
         sender_name = event.get_sender_name()
 
         if event.message_obj.group_id:
-            group_id = event.message_obj.group_id
+            group_id = str(event.message_obj.group_id)
             group_name = self._get_group_name(event)
             self.group_events[group_id] = event
 
@@ -393,7 +393,7 @@ class DailyReportAnalysisAPI(Star):
                     self._delay_private_summary_task(600, current_task_id)
                 )
         else:
-            group_id = event.message_obj.group_id
+            group_id = str(event.message_obj.group_id)
             group_name = self._get_group_name(event)
             bot_name = await get_bot_nickname(
                 self.context, event, group_id, self.bot_nicknames
