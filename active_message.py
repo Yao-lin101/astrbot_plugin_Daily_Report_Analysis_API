@@ -15,6 +15,61 @@ from .prompts import (
 )
 
 
+class MockEvent:
+    def __init__(self, unified_msg_origin: str):
+        self._unified_msg_origin = unified_msg_origin
+        self._extras = {}
+        self._result = None
+
+        parts = unified_msg_origin.split(":")
+        self.platform_id = parts[0]
+        self.platform_name = parts[0]
+        self._session_id = parts[-1]
+
+    @property
+    def unified_msg_origin(self) -> str:
+        return self._unified_msg_origin
+
+    @unified_msg_origin.setter
+    def unified_msg_origin(self, value: str) -> None:
+        self._unified_msg_origin = value
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    @session_id.setter
+    def session_id(self, value: str) -> None:
+        self._session_id = value
+
+    def set_extra(self, key, value):
+        self._extras[key] = value
+
+    def get_extra(self, key, default=None):
+        return self._extras.get(key, default)
+
+    def get_result(self):
+        return self._result
+
+    def set_result(self, result):
+        self._result = result
+
+    def get_platform_name(self):
+        return self.platform_name
+
+    def get_sender_id(self):
+        return self.session_id
+
+    def get_sender_name(self):
+        return ""
+
+    def is_stopped(self):
+        return False
+
+    def clear_result(self):
+        self._result = None
+
+
 class ActiveMessageHandler:
     def __init__(self, plugin):
         self.plugin = plugin
@@ -87,7 +142,7 @@ class ActiveMessageHandler:
                     logger.info("ActiveMessageHandler: 主动消息检测机制已激活。")
                 elif not enabled and last_enabled is True:
                     logger.info("ActiveMessageHandler: 主动消息检测机制已停止。")
-                
+
                 last_enabled = enabled
 
                 if not enabled:
@@ -328,12 +383,16 @@ class ActiveMessageHandler:
                         "active_msg_next_check_time",
                         self.next_check_time.isoformat(),
                     )
-                    
+
                     # 记录决策到数据库
                     self.db.add_active_message_decision(
-                        False, message_type, reason, safe_delay, self.next_check_time.isoformat()
+                        False,
+                        message_type,
+                        reason,
+                        safe_delay,
+                        self.next_check_time.isoformat(),
                     )
-                    
+
                     logger.info(
                         f"ActiveMessageHandler: 遵循模型建议，将在 {safe_delay} 分钟后（{self.next_check_time}）再次观察 (理由: {reason}{' [已截断]' if safe_delay < delay_val else ''})"
                     )
@@ -342,7 +401,11 @@ class ActiveMessageHandler:
                     logger.debug(f"应用延迟时间失败: {e}")
                     # 如果应用延迟失败，也记录一下
                     self.db.add_active_message_decision(
-                        False, message_type, f"Error: {e}. Original Reason: {reason}", 0, datetime.now().isoformat()
+                        False,
+                        message_type,
+                        f"Error: {e}. Original Reason: {reason}",
+                        0,
+                        datetime.now().isoformat(),
                     )
 
                 logger.info("ActiveMessageHandler: 判定不需要发消息。")
@@ -403,7 +466,7 @@ class ActiveMessageHandler:
                     time_prefix = (
                         f"[{datetime.fromtimestamp(ts).strftime('%m-%d %H:%M')}] "
                     )
-                
+
                 content = m["content"]
                 # 统一格式：去除可能存在的 【用户】Nickname: 或 【你】Nickname: 前缀，实现合并后无额外标注
                 # 这样无论是私聊还是群聊，在上下文中都呈现为 "【用户】: ..." 或 "【你】: ..."
@@ -411,7 +474,9 @@ class ActiveMessageHandler:
                 context_lines.append(f"{time_prefix}{role_label}: {clean_content}")
             return "\n".join(context_lines)
         except Exception as e:
-            logger.error(f"ActiveMessageHandler: 获取合并上下文失败: {e}\n{traceback.format_exc()}")
+            logger.error(
+                f"ActiveMessageHandler: 获取合并上下文失败: {e}\n{traceback.format_exc()}"
+            )
             return "（暂无最近对话记录）"
 
     async def _generate_and_send_message(
@@ -428,11 +493,11 @@ class ActiveMessageHandler:
                 memory_data = hybrid_res["prompt"]
         else:
             memory_data = short_data
-        
+
         system_prompt = await self._get_system_prompt()
         conversation_context = await self._get_recent_conversation_context(limit=15)
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
+
         # 判断发送频道：如果 5 分钟内在群里活跃过，则发到群里并 @
         now_ts = datetime.now().timestamp()
         use_group = False
@@ -445,9 +510,11 @@ class ActiveMessageHandler:
             current_time=current_time,
             reason=reason,
             memory_data=memory_data,
-            conversation_context=conversation_context if conversation_context else "（暂无最近对话记录）",
+            conversation_context=conversation_context
+            if conversation_context
+            else "（暂无最近对话记录）",
         )
-        
+
         if use_group:
             gen_prompt += f"\n\n注意：这条消息将发送到群聊（{target_group_id}）并 @ 用户，请以此氛围回复。"
 
@@ -466,10 +533,13 @@ class ActiveMessageHandler:
         if not message_content:
             return
 
-        logger.info(f"ActiveMessageHandler: 生成主动消息：{message_content} (频道: {'群聊' if use_group else '私聊'})")
+        logger.info(
+            f"ActiveMessageHandler: 生成主动消息：{message_content} (频道: {'群聊' if use_group else '私聊'})"
+        )
 
         specific_user_id = self.plugin.config.get("specific_user_id")
-        if not specific_user_id: return
+        if not specific_user_id:
+            return
 
         try:
             from astrbot.api.message_components import At, Plain
@@ -484,22 +554,61 @@ class ActiveMessageHandler:
                 else:
                     target_platform = raw_platform
 
+            from astrbot.core.message.message_event_result import (
+                MessageEventResult,
+                ResultContentType,
+            )
+            from astrbot.core.pipeline.context_utils import call_event_hook
+            from astrbot.core.provider.entities import LLMResponse
+            from astrbot.core.star.star_handler import EventType
+
             if use_group:
-                chain = MessageChain(chain=[At(qq=specific_user_id), Plain(f" {message_content}")])
+                unified_origin = f"{target_platform}:group_message:{target_group_id}"
+            else:
+                unified_origin = f"{target_platform}:friend_message:{specific_user_id}"
+
+            mock_event = MockEvent(unified_origin)
+            llm_response = LLMResponse(
+                role="assistant", completion_text=message_content
+            )
+            await call_event_hook(
+                mock_event, EventType.OnLLMResponseEvent, llm_response
+            )
+            message_content = llm_response.completion_text
+
+            if use_group:
+                chain = MessageChain(
+                    chain=[At(qq=specific_user_id), Plain(f" {message_content}")]
+                )
+            else:
+                chain = MessageChain().message(message_content)
+
+            result_obj = MessageEventResult()
+            result_obj.chain = chain.chain
+            result_obj.set_result_content_type(ResultContentType.LLM_RESULT)
+            mock_event.set_result(result_obj)
+
+            await call_event_hook(mock_event, EventType.OnDecoratingResultEvent)
+
+            final_chain = MessageChain(chain=mock_event.get_result().chain)
+
+            if use_group:
                 await StarTools.send_message_by_id(
                     type="GroupMessage",
                     id=target_group_id,
-                    message_chain=chain,
+                    message_chain=final_chain,
                     platform=target_platform,
                 )
-                
+
                 # 记录到群消息数据库
                 group_meta = self.db.get_group_meta(target_group_id)
-                bot_name = (group_meta[4] if group_meta and len(group_meta) > 4 else "机器人") or "机器人"
+                bot_name = (
+                    group_meta[4] if group_meta and len(group_meta) > 4 else "机器人"
+                ) or "机器人"
                 msg_content_formatted = f"【你】{bot_name}: {message_content}"
-                
+
                 new_msg_id = (group_meta[2] if group_meta else 0) + 1
-                
+
                 self.db.add_group_message(
                     target_group_id,
                     new_msg_id,
@@ -508,15 +617,16 @@ class ActiveMessageHandler:
                     msg_content_formatted,
                     datetime.now().timestamp(),
                     "active_msg_" + str(int(datetime.now().timestamp())),
-                    is_specific_user=True
+                    is_specific_user=True,
                 )
-                self.db.update_group_meta(target_group_id, message_id_counter=new_msg_id)
+                self.db.update_group_meta(
+                    target_group_id, message_id_counter=new_msg_id
+                )
             else:
-                chain = MessageChain().message(message_content)
                 await StarTools.send_message_by_id(
                     type="FriendMessage",
                     id=specific_user_id,
-                    message_chain=chain,
+                    message_chain=final_chain,
                     platform=target_platform,
                 )
                 # 记录到私聊数据库
@@ -527,26 +637,38 @@ class ActiveMessageHandler:
                     datetime.now().timestamp(),
                 )
 
+            await call_event_hook(mock_event, EventType.OnAfterMessageSentEvent)
+
             # 统一写入对话历史（AstrBot 核心缓存）
             if self.user_unified_origin:
                 try:
                     # 获取当前会话正在使用的对话 ID
-                    curr_cid = await self.context.conversation_manager.get_curr_conversation_id(self.user_unified_origin)
+                    curr_cid = await self.context.conversation_manager.get_curr_conversation_id(
+                        self.user_unified_origin
+                    )
                     if curr_cid:
                         conv = await self.context.conversation_manager.get_conversation(
                             self.user_unified_origin, curr_cid
                         )
                         if conv:
                             history = json.loads(conv.history)
-                            history.append({"role": "assistant", "content": message_content})
+                            history.append(
+                                {"role": "assistant", "content": message_content}
+                            )
                             await self.context.conversation_manager.update_conversation(
                                 self.user_unified_origin, curr_cid, history=history
                             )
-                            logger.info(f"ActiveMessageHandler: 已将主动消息写入对话历史 (Session: {self.user_unified_origin}, CID: {curr_cid})。")
+                            logger.info(
+                                f"ActiveMessageHandler: 已将主动消息写入对话历史 (Session: {self.user_unified_origin}, CID: {curr_cid})。"
+                            )
                 except Exception as e:
-                    logger.error(f"ActiveMessageHandler: 写入对话历史失败: {e}\n{traceback.format_exc()}")
+                    logger.error(
+                        f"ActiveMessageHandler: 写入对话历史失败: {e}\n{traceback.format_exc()}"
+                    )
 
             logger.info("ActiveMessageHandler: 主动消息发送成功。")
 
         except Exception as e:
-            logger.error(f"ActiveMessageHandler: 发送主动消息失败：{e}\n{traceback.format_exc()}")
+            logger.error(
+                f"ActiveMessageHandler: 发送主动消息失败：{e}\n{traceback.format_exc()}"
+            )
