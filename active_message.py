@@ -25,7 +25,7 @@ class MockEvent:
         self.platform_id = parts[0]
         self.platform_name = parts[0]
         self._session_id = parts[-1]
-        self.plugins_name = None
+        self.plugins_name = ["meme_manager"]
 
     @property
     def unified_msg_origin(self) -> str:
@@ -564,9 +564,9 @@ class ActiveMessageHandler:
             from astrbot.core.star.star_handler import EventType
 
             if use_group:
-                unified_origin = f"{target_platform}:group_message:{target_group_id}"
+                unified_origin = f"{target_platform}:GroupMessage:{target_group_id}"
             else:
-                unified_origin = f"{target_platform}:friend_message:{specific_user_id}"
+                unified_origin = f"{target_platform}:FriendMessage:{specific_user_id}"
 
             mock_event = MockEvent(unified_origin)
             llm_response = LLMResponse(
