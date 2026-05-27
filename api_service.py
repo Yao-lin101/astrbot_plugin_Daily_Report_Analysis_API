@@ -33,7 +33,9 @@ class APIService:
     async def fetch_report(self, date: str):
         """获取日报详情"""
         # 路径: /api/v1/d/{display_code}/reports/detail/?date=...
-        url = f"{self.base_url}/api/v1/d/{self.display_code}/reports/detail/?date={date}"
+        url = (
+            f"{self.base_url}/api/v1/d/{self.display_code}/reports/detail/?date={date}"
+        )
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as response:

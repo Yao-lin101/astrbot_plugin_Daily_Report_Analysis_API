@@ -317,8 +317,8 @@ class Storage:
                 SELECT role, content, timestamp FROM (
                     SELECT role, content, timestamp FROM private_messages WHERE user_id = ?
                     UNION ALL
-                    SELECT (CASE WHEN sender_id = 'bot' THEN 'bot' ELSE 'user' END) as role, content, timestamp 
-                    FROM group_messages 
+                    SELECT (CASE WHEN sender_id = 'bot' THEN 'bot' ELSE 'user' END) as role, content, timestamp
+                    FROM group_messages
                     WHERE is_specific_user = 1
                 )
                 ORDER BY timestamp DESC

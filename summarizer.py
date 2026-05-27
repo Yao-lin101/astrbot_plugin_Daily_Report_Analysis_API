@@ -213,11 +213,13 @@ class Summarizer:
                     # 主动重试（重新发起30分钟计时）
                     if group_id in self.plugin.group_timers:
                         self.plugin.group_timers[group_id].cancel()
-                    
+
                     self.plugin.group_task_ids[group_id] += 1
                     current_task_id = self.plugin.group_task_ids[group_id]
                     self.plugin.group_timers[group_id] = asyncio.create_task(
-                        self.plugin._delay_summarize_task(group_id, 1800, current_task_id)
+                        self.plugin._delay_summarize_task(
+                            group_id, 1800, current_task_id
+                        )
                     )
 
             except Exception as e:
@@ -381,7 +383,9 @@ class Summarizer:
                 summary_topic = "私聊对话"
                 joined_content = " / ".join(user_msgs)[:100]
                 if messages[0]["role"] == "bot" and gap_str:
-                    summary_content = f"主动发送消息，用户在{gap_str}后回复：{joined_content}"
+                    summary_content = (
+                        f"主动发送消息，用户在{gap_str}后回复：{joined_content}"
+                    )
                 else:
                     summary_content = joined_content
 

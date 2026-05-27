@@ -25,7 +25,7 @@ class MockEvent:
         self.platform_id = parts[0]
         self.platform_name = parts[0]
         self._session_id = parts[-1]
-        self.plugins_name = ["meme_manager"]
+        self.plugins_name = ["astrbot_plugin_meme_manager", "meme_manager"]
 
     @property
     def unified_msg_origin(self) -> str:

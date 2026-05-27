@@ -7,7 +7,7 @@ from datetime import datetime
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.message_components import At, Plain, Reply, Image
+from astrbot.api.message_components import At, Image, Plain, Reply
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.provider.entities import ProviderRequest
 
@@ -43,8 +43,8 @@ class DailyReportAnalysisAPI(Star):
         self.active_groups = set()
 
         self.private_timer = None
-        self.private_task_id = 0 # 追踪私聊总结任务 ID
-        self.group_task_ids = defaultdict(int) # 追踪群聊总结任务 ID
+        self.private_task_id = 0  # 追踪私聊总结任务 ID
+        self.group_task_ids = defaultdict(int)  # 追踪群聊总结任务 ID
         self.config = config
 
         # 初始化数据库
@@ -246,7 +246,11 @@ class DailyReportAnalysisAPI(Star):
     async def on_all_message(self, event: AstrMessageEvent):
         sender_id = str(event.get_sender_id())
         specific_user_id = str(self.config.get("specific_user_id", ""))
-        group_id = str(event.message_obj.group_id) if event.message_obj.group_id is not None else None
+        group_id = (
+            str(event.message_obj.group_id)
+            if event.message_obj.group_id is not None
+            else None
+        )
 
         # 1. 预解析消息内容并清洗
         message_content = await format_full_message(
@@ -298,12 +302,14 @@ class DailyReportAnalysisAPI(Star):
 
             is_it_you = sender_id == specific_user_id
             # 判定是否产生了直接互动（私聊，或者群聊中 At/回复/唤醒机器人）
-            is_interacted = not event.message_obj.group_id or getattr(event, "is_at_or_wake_command", False)
-            
+            is_interacted = not event.message_obj.group_id or getattr(
+                event, "is_at_or_wake_command", False
+            )
+
             # 标签固定为【用户】，但数据库标记 is_specific_user 仅在有互动时为 1
             prefix = "【用户】" if is_it_you else "【群友】"
             is_specific_user = is_it_you and is_interacted
-            
+
             if is_it_you:
                 self.user_nicknames[group_id] = sender_name
 
@@ -344,7 +350,7 @@ class DailyReportAnalysisAPI(Star):
                     self.active_groups.add(group_id)
                     if group_id in self.group_timers:
                         self.group_timers[group_id].cancel()
-                    
+
                     self.group_task_ids[group_id] += 1
                     current_task_id = self.group_task_ids[group_id]
                     self.group_timers[group_id] = asyncio.create_task(
@@ -352,13 +358,15 @@ class DailyReportAnalysisAPI(Star):
                     )
         else:
             if sender_id == specific_user_id:
-                row_id = self.db.add_private_message(sender_id, "user", message_content, now)
+                row_id = self.db.add_private_message(
+                    sender_id, "user", message_content, now
+                )
                 event.set_extra("report_db_row_id", row_id)
                 event.set_extra("report_db_table", "private_messages")
                 event.set_extra("report_prefix", "")
                 if self.private_timer:
                     self.private_timer.cancel()
-                
+
                 self.private_task_id += 1
                 current_task_id = self.private_task_id
                 self.private_timer = asyncio.create_task(
@@ -375,8 +383,10 @@ class DailyReportAnalysisAPI(Star):
             return
 
         # 检查是否包含推理过程
-        if hasattr(result, 'reasoning_content') and result.reasoning_content:
-            reply_text = f"<reasoning>\n{result.reasoning_content}\n</reasoning>\n{reply_text}"
+        if hasattr(result, "reasoning_content") and result.reasoning_content:
+            reply_text = (
+                f"<reasoning>\n{result.reasoning_content}\n</reasoning>\n{reply_text}"
+            )
 
         if not event.message_obj.group_id:
             specific_user_id = str(self.config.get("specific_user_id", ""))
@@ -386,7 +396,7 @@ class DailyReportAnalysisAPI(Star):
                 )
                 if self.private_timer:
                     self.private_timer.cancel()
-                
+
                 self.private_task_id += 1
                 current_task_id = self.private_task_id
                 self.private_timer = asyncio.create_task(
@@ -484,7 +494,7 @@ class DailyReportAnalysisAPI(Star):
                 text = part.get("text", "")
             elif hasattr(part, "text"):
                 text = part.text
-            
+
             if text:
                 # 剔除 system_reminder 部分，避免重复注入
                 if "<system_reminder>" in text:

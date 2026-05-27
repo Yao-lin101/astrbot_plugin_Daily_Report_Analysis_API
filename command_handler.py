@@ -1,11 +1,7 @@
 from datetime import datetime
-from pathlib import Path
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
-from astrbot.api.message_components import Image, Node, Nodes, Plain
-
-
 
 
 class CommandHandler:
@@ -45,10 +41,8 @@ class CommandHandler:
             yield event.plain_result(self._get_resp("resp_invalid_date"))
             return
 
-
-
         report_url = f"{self.api_service.base_url}/d/{self.api_service.display_code}/report/{date}"
-        
+
         # 验证报告是否存在
         report_data = await self.api_service.fetch_report(date)
         if not report_data:
@@ -68,7 +62,9 @@ class CommandHandler:
             return
 
         # 直接回复 URL
-        yield event.plain_result(self._get_resp("resp_daily_success", date=date, url=report_url))
+        yield event.plain_result(
+            self._get_resp("resp_daily_success", date=date, url=report_url)
+        )
 
     async def force_private_summary(self, event: AstrMessageEvent):
         """手动强制触发私聊记录的总结与上报"""
@@ -98,7 +94,11 @@ class CommandHandler:
             yield event.plain_result(self._get_resp("resp_permission_denied"))
             return
 
-        group_id = str(event.message_obj.group_id) if event.message_obj.group_id is not None else None
+        group_id = (
+            str(event.message_obj.group_id)
+            if event.message_obj.group_id is not None
+            else None
+        )
         if not group_id:
             yield event.plain_result(self._get_resp("resp_group_only"))
             return
@@ -140,7 +140,11 @@ class CommandHandler:
             yield event.plain_result(self._get_resp("resp_permission_denied"))
             return
 
-        group_id = str(event.message_obj.group_id) if event.message_obj.group_id is not None else None
+        group_id = (
+            str(event.message_obj.group_id)
+            if event.message_obj.group_id is not None
+            else None
+        )
         if not group_id:
             yield event.plain_result(self._get_resp("resp_group_only"))
             return
