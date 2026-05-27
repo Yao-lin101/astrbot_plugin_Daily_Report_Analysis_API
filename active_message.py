@@ -548,8 +548,10 @@ class ActiveMessageHandler:
 
             # 平台兼容性处理
             target_platform = "aiocqhttp"
+            actual_platform = "aiocqhttp"
             if self.user_unified_origin and ":" in self.user_unified_origin:
                 raw_platform = self.user_unified_origin.split(":")[0]
+                actual_platform = raw_platform
                 if raw_platform.lower() in ["arisu", "onebot", "gocq"]:
                     target_platform = "aiocqhttp"
                 else:
@@ -564,9 +566,9 @@ class ActiveMessageHandler:
             from astrbot.core.star.star_handler import EventType
 
             if use_group:
-                unified_origin = f"{target_platform}:GroupMessage:{target_group_id}"
+                unified_origin = f"{actual_platform}:GroupMessage:{target_group_id}"
             else:
-                unified_origin = f"{target_platform}:FriendMessage:{specific_user_id}"
+                unified_origin = f"{actual_platform}:FriendMessage:{specific_user_id}"
 
             mock_event = MockEvent(unified_origin)
             llm_response = LLMResponse(
