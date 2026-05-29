@@ -114,3 +114,48 @@ async def format_full_message(
             full_content += " [文件] "
 
     return full_content.strip() or event.message_str
+
+
+def parse_json_robust(raw_result: str) -> dict:
+    """Robustly parse JSON from LLM response, stripping markdown formatting and extra tags/text."""
+    import json
+
+    raw_result = raw_result.strip()
+
+    # 1. Clean markdown code blocks if any
+    if raw_result.startswith("```json"):
+        raw_result = raw_result[7:]
+    elif raw_result.startswith("```"):
+        raw_result = raw_result[3:]
+    if raw_result.endswith("```"):
+        raw_result = raw_result[:-3]
+
+    raw_result = raw_result.strip()
+
+    # 2. Try standard json.loads
+    try:
+        return json.loads(raw_result)
+    except json.JSONDecodeError as e:
+        # 3. Fallback: find first '{' and try parsing from largest matching closing brace
+        start_idx = raw_result.find("{")
+        if start_idx != -1:
+            indices = [i for i, char in enumerate(raw_result) if char == "}"]
+            for end_idx in reversed(indices):
+                if end_idx > start_idx:
+                    try:
+                        return json.loads(raw_result[start_idx : end_idx + 1])
+                    except json.JSONDecodeError:
+                        continue
+
+        # 4. Fallback: find first '[' and try parsing from largest matching closing bracket
+        start_arr = raw_result.find("[")
+        if start_arr != -1:
+            indices = [i for i, char in enumerate(raw_result) if char == "]"]
+            for end_arr in reversed(indices):
+                if end_arr > start_arr:
+                    try:
+                        return json.loads(raw_result[start_arr : end_arr + 1])
+                    except json.JSONDecodeError:
+                        continue
+
+        raise e

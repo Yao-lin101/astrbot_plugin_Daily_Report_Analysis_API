@@ -113,18 +113,10 @@ class Summarizer:
                     prompt=prompt,
                 )
                 raw_result = response.completion_text.strip()
-
-                # 尝试剥离 Markdown 包裹
-                if raw_result.startswith("```json"):
-                    raw_result = raw_result[7:]
-                elif raw_result.startswith("```"):
-                    raw_result = raw_result[3:]
-                if raw_result.endswith("```"):
-                    raw_result = raw_result[:-3]
-                raw_result = raw_result.strip()
+                from .message_utils import parse_json_robust
 
                 try:
-                    result_json = json.loads(raw_result)
+                    result_json = parse_json_robust(raw_result)
                 except json.JSONDecodeError:
                     logger.error(
                         f"DailyReportAnalysisAPI: LLM 返回的不是合法 JSON: {raw_result}"
@@ -343,16 +335,10 @@ class Summarizer:
                     )
 
                     raw_result = response.completion_text.strip()
-                    # Clean Markdown formatting
-                    if raw_result.startswith("```json"):
-                        raw_result = raw_result[7:]
-                    elif raw_result.startswith("```"):
-                        raw_result = raw_result[3:]
-                    if raw_result.endswith("```"):
-                        raw_result = raw_result[:-3]
+                    from .message_utils import parse_json_robust
 
                     try:
-                        result_json = json.loads(raw_result.strip())
+                        result_json = parse_json_robust(raw_result)
                         summary_topic = result_json.get("topic", "")
                         summary_content = result_json.get("content", "")
                     except Exception:

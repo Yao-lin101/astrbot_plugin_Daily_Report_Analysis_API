@@ -248,14 +248,9 @@ class ActiveMessageHandler:
         return system_prompt
 
     def _parse_json(self, raw_result):
-        raw_result = raw_result.strip()
-        if raw_result.startswith("```json"):
-            raw_result = raw_result[7:]
-        elif raw_result.startswith("```"):
-            raw_result = raw_result[3:]
-        if raw_result.endswith("```"):
-            raw_result = raw_result[:-3]
-        return json.loads(raw_result.strip())
+        from .message_utils import parse_json_robust
+
+        return parse_json_robust(raw_result)
 
     async def _predict_first_active_time(self, now: datetime):
         logger.info("ActiveMessageHandler: 正在获取作息推测今日首次活动时间...")
