@@ -244,6 +244,8 @@ class DailyReportAnalysisAPI(Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):
+        if event.get_extra("is_active_message_wake"):
+            return
         sender_id = str(event.get_sender_id())
         specific_user_id = str(self.config.get("specific_user_id", ""))
         group_id = (
@@ -440,6 +442,30 @@ class DailyReportAnalysisAPI(Star):
                 {"id": msg_id, "content": msg_content_formatted, "sender_id": "bot"}
             )
 
+        # 统一写入对话历史（因为设置了 request.conversation = None 使得核心无法自动保存）
+        if event.get_extra("is_active_message_wake"):
+            try:
+                curr_cid = (
+                    await self.context.conversation_manager.get_curr_conversation_id(
+                        event.unified_msg_origin
+                    )
+                )
+                if curr_cid:
+                    conv = await self.context.conversation_manager.get_conversation(
+                        event.unified_msg_origin, curr_cid
+                    )
+                    if conv:
+                        history = json.loads(conv.history)
+                        history.append({"role": "assistant", "content": reply_text})
+                        await self.context.conversation_manager.update_conversation(
+                            event.unified_msg_origin, curr_cid, history=history
+                        )
+                        logger.info(
+                            f"DailyReportAnalysisAPI: 已将主动消息写入对话历史 (Session: {event.unified_msg_origin}, CID: {curr_cid})。"
+                        )
+            except Exception as e:
+                logger.error(f"DailyReportAnalysisAPI: 写入对话历史失败: {e}")
+
     async def _delay_summarize_task(self, group_id, delay, task_id):
         try:
             await asyncio.sleep(delay)
@@ -474,6 +500,9 @@ class DailyReportAnalysisAPI(Star):
         当 LLM 请求发起时，更新数据库中的消息内容。
         此时消息已经经过了图片转述、引用回复处理等，内容更加丰富。
         """
+        if event.get_extra("is_active_message_wake"):
+            request.conversation = None
+            return
         row_id = event.get_extra("report_db_row_id")
         table_name = event.get_extra("report_db_table")
         if not row_id or not table_name:
