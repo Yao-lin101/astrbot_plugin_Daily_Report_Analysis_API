@@ -6,11 +6,13 @@ import traceback
 from datetime import datetime, timedelta
 
 from astrbot.api import logger
-from astrbot.core.star.star_tools import StarTools
+from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.platform.message_type import MessageType
 
 from .prompts import (
     ACTIVE_MSG_CHECK_STATUS_PROMPT,
-    ACTIVE_MSG_GENERATE_PROMPT,
+    ACTIVE_MSG_WAKE_PROMPT,
 )
 
 
@@ -68,6 +70,97 @@ class MockEvent:
 
     def clear_result(self):
         self._result = None
+
+
+class ActiveMessageWakeEvent(AstrMessageEvent):
+    """Synthetic event used when an active message check triggers the native reply pipeline."""
+
+    def __init__(
+        self,
+        *,
+        context,
+        session_str: str,
+        message: str,
+        sender_id: str,
+        sender_name: str = "System",
+        message_type: MessageType = MessageType.FRIEND_MESSAGE,
+        at_user: bool = True,
+    ) -> None:
+        import time
+        import uuid
+
+        from astrbot.core.message.components import Plain
+        from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
+        from astrbot.core.platform.message_session import MessageSession
+        from astrbot.core.platform.platform_metadata import PlatformMetadata
+
+        session = MessageSession.from_str(session_str)
+        platform_meta = PlatformMetadata(
+            name=session.platform_name,
+            description="Active Message Wake Event",
+            id=session.platform_name,
+        )
+
+        msg_obj = AstrBotMessage()
+        msg_obj.type = message_type
+        msg_obj.self_id = sender_id
+        msg_obj.session_id = session.session_id
+        msg_obj.message_id = uuid.uuid4().hex
+        msg_obj.sender = MessageMember(user_id=session.session_id, nickname=sender_name)
+        msg_obj.message = [Plain(message)]
+        msg_obj.message_str = message
+        msg_obj.raw_message = message
+        msg_obj.timestamp = int(time.time())
+
+        if message_type == MessageType.GROUP_MESSAGE:
+            msg_obj.group_id = session.session_id
+            from astrbot.core.platform.astrbot_message import Group
+
+            msg_obj.group = Group(session.session_id)
+
+        super().__init__(message, msg_obj, platform_meta, session.session_id)
+
+        self.session = session
+        self.context_obj = context
+        self.is_at_or_wake_command = True
+        self.is_wake = True
+        self.target_user_id = sender_id
+        self.at_user = at_user
+        self._at_sent = False
+
+        # 设置 extra 标识为主动消息唤醒事件
+        self.set_extra("is_active_message_wake", True)
+
+    async def send(self, message: MessageChain) -> None:
+        if message is None:
+            return
+
+        if (
+            self.session.message_type == MessageType.GROUP_MESSAGE
+            and self.target_user_id
+            and self.at_user
+            and not self._at_sent
+        ):
+            from astrbot.core.message.components import At, Plain
+
+            # 避免重复 At
+            has_at = any(
+                isinstance(comp, At) and str(comp.qq) == str(self.target_user_id)
+                for comp in message.chain
+            )
+            if not has_at:
+                message.chain.insert(0, At(qq=self.target_user_id))
+                # 如果第一项后面是 Plain 文本，我们可以给 Plain 文本加个空格以改善格式
+                if len(message.chain) > 1 and isinstance(message.chain[1], Plain):
+                    message.chain[1].text = " " + message.chain[1].text.lstrip()
+            self._at_sent = True
+
+        await self.context_obj.send_message(self.session, message)
+        await super().send(message)
+
+    async def send_streaming(self, generator, use_fallback: bool = False) -> None:
+        async for chain in generator:
+            await self.send(chain)
 
 
 class ActiveMessageHandler:
@@ -301,12 +394,12 @@ class ActiveMessageHandler:
 
             if need_message:
                 logger.info(
-                    f"ActiveMessageHandler: 判定需要发消息，类型：{message_type}，理由：{reason}。准备生成回复..."
+                    f"ActiveMessageHandler: 判定需要发消息，类型：{message_type}，理由：{reason}。准备唤醒原生回复..."
                 )
                 self.db.add_active_message_decision(
                     True, message_type, reason, 0, datetime.now().isoformat()
                 )
-                await self._generate_and_send_message(reason, message_type, status_data)
+                await self._wake_native_reply(reason, message_type, status_data)
                 return True
             else:
                 delay_minutes = result_json.get("delay_minutes", 0)
@@ -359,61 +452,170 @@ class ActiveMessageHandler:
             return False
 
     async def _get_recent_conversation_context(self, limit: int = 15) -> str:
-        """获取最近的合并对话上下文（私聊+群聊中与用户的互动）并格式化为字符串"""
+        """获取最近的对话上下文（通过 AstrBot 原生对话记录构建，过滤群聊中其他用户的发言）"""
         specific_user_id = self.plugin.config.get("specific_user_id")
         if not specific_user_id:
             return "（暂无最近对话记录）"
 
+        # 1. 确定当前活跃会话 session_str
+        actual_platform = "aiocqhttp"
+        if self.user_unified_origin and ":" in self.user_unified_origin:
+            actual_platform = self.user_unified_origin.split(":")[0]
+
+        now_ts = datetime.now().timestamp()
+        use_group = False
+        target_group_id = None
+        if self.last_active_group_id and (
+            now_ts - self.last_active_time < 3600
+        ):  # 1小时内活跃则视为群聊活跃
+            use_group = True
+            target_group_id = self.last_active_group_id
+
+        if use_group:
+            session_str = f"{actual_platform}:GroupMessage:{target_group_id}"
+        else:
+            session_str = f"{actual_platform}:FriendMessage:{specific_user_id}"
+
         try:
-            # 使用合并后的记录
-            messages = self.db.get_recent_combined_messages(
-                str(specific_user_id), limit=limit
+            # 2. 从 AstrBot 获取当前会话的原生对话历史
+            curr_cid = await self.context.conversation_manager.get_curr_conversation_id(
+                session_str
             )
-            if not messages:
+            if not curr_cid:
                 return "（暂无最近对话记录）"
 
-            context_lines = []
-            for m in messages:
-                role_label = "【用户】" if m["role"] == "user" else "【你】"
-                ts = m.get("timestamp")
-                time_prefix = ""
-                if ts:
-                    time_prefix = (
-                        f"[{datetime.fromtimestamp(ts).strftime('%m-%d %H:%M')}] "
-                    )
+            conv = await self.context.conversation_manager.get_conversation(
+                session_str, curr_cid
+            )
+            if not conv or not conv.history:
+                return "（暂无最近对话记录）"
 
+            history = json.loads(conv.history)
+
+            # 3. 过滤并提取与特定用户的对话
+            filtered_messages = []
+
+            if use_group:
+                # 群聊消息过滤：
+                # - user 消息必须包含 "User ID: {specific_user_id}"
+                # - assistant 消息必须紧跟在合格的 user 消息后面
+                i = 0
+                while i < len(history):
+                    msg = history[i]
+                    role = msg.get("role")
+                    content = msg.get("content")
+
+                    if role == "user":
+                        # 检查是否包含 target user ID
+                        matched = False
+                        if isinstance(content, str):
+                            if f"User ID: {specific_user_id}" in content:
+                                matched = True
+                        elif isinstance(content, list):
+                            for part in content:
+                                if (
+                                    isinstance(part, dict)
+                                    and part.get("type") == "text"
+                                ):
+                                    if f"User ID: {specific_user_id}" in part.get(
+                                        "text", ""
+                                    ):
+                                        matched = True
+                                        break
+
+                        if matched:
+                            filtered_messages.append(
+                                {"role": "user", "content": content}
+                            )
+                            # 如果下一条是机器人回复，也抓取进来
+                            if (
+                                i + 1 < len(history)
+                                and history[i + 1].get("role") == "assistant"
+                            ):
+                                filtered_messages.append(
+                                    {
+                                        "role": "assistant",
+                                        "content": history[i + 1].get("content"),
+                                    }
+                                )
+                                i += 1  # 跳过机器人那一条，避免重复扫描
+                    i += 1
+            else:
+                # 私聊消息直接取全部
+                for msg in history:
+                    if msg.get("role") in ["user", "assistant"]:
+                        filtered_messages.append(
+                            {
+                                "role": msg.get("role"),
+                                "content": msg.get("content"),
+                            }
+                        )
+
+            # 只保留最近的 limit 条消息
+            recent_msgs = filtered_messages[-limit:]
+            if not recent_msgs:
+                return "（暂无最近对话记录）"
+
+            # 4. 格式化输出
+            context_lines = []
+            for m in recent_msgs:
+                role_label = "【用户】" if m["role"] == "user" else "【你】"
                 content = m["content"]
-                # 统一格式：去除可能存在的 【用户】Nickname: 或 【你】Nickname: 前缀，实现合并后无额外标注
-                # 这样无论是私聊还是群聊，在上下文中都呈现为 "【用户】: ..." 或 "【你】: ..."
-                clean_content = re.sub(r"^【.*?】.*?: ", "", content)
-                context_lines.append(f"{time_prefix}{role_label}: {clean_content}")
+
+                # 如果是列表多模态消息，合并文字内容
+                if isinstance(content, list):
+                    text_parts = []
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            text_parts.append(part.get("text", ""))
+                    content = "".join(text_parts)
+
+                if not isinstance(content, str):
+                    content = ""
+
+                # 去除 <system_reminder> 块和 <reasoning> 等辅助排版标记，保留纯文本
+                content = re.sub(
+                    r"<system_reminder>.*?</system_reminder>",
+                    "",
+                    content,
+                    flags=re.DOTALL,
+                )
+                content = re.sub(
+                    r"<reasoning>.*?</reasoning>", "", content, flags=re.DOTALL
+                )
+                content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+                content = re.sub(
+                    r"<RAG-Faiss-Memory>.*?</RAG-Faiss-Memory>",
+                    "",
+                    content,
+                    flags=re.DOTALL,
+                )
+
+                # 去除可能的前缀，统一为 "【用户】: ..." 样式
+                clean_content = re.sub(r"^【.*?】.*?: ", "", content.strip())
+                if clean_content:
+                    context_lines.append(f"{role_label}: {clean_content}")
+
             return "\n".join(context_lines)
         except Exception as e:
             logger.error(
-                f"ActiveMessageHandler: 获取合并上下文失败: {e}\n{traceback.format_exc()}"
+                f"ActiveMessageHandler: 从 AstrBot 历史获取上下文失败: {e}\n{traceback.format_exc()}"
             )
             return "（暂无最近对话记录）"
 
-    async def _generate_and_send_message(
-        self, reason: str, message_type: str = "care", short_data: str = ""
+    async def _wake_native_reply(
+        self, reason: str, message_type: str, status_data: str
     ):
-        if message_type == "chat":
-            hybrid_res = await self.api_service.fetch_status(memory="hybrid")
-            if not hybrid_res or "prompt" not in hybrid_res:
-                logger.error(
-                    "ActiveMessageHandler: 获取 hybrid 状态失败，退回使用 short 状态。"
-                )
-                memory_data = short_data
-            else:
-                memory_data = hybrid_res["prompt"]
-        else:
-            memory_data = short_data
+        specific_user_id = self.plugin.config.get("specific_user_id")
+        if not specific_user_id:
+            logger.error("ActiveMessageHandler: 未配置 specific_user_id，无法唤醒。")
+            return
 
-        system_prompt = await self._get_system_prompt()
-        conversation_context = await self._get_recent_conversation_context(limit=15)
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # 平台兼容性处理
+        actual_platform = "aiocqhttp"
+        if self.user_unified_origin and ":" in self.user_unified_origin:
+            actual_platform = self.user_unified_origin.split(":")[0]
 
-        # 判断发送频道：如果 5 分钟内在群里活跃过，则发到群里并 @
         now_ts = datetime.now().timestamp()
         use_group = False
         target_group_id = None
@@ -421,171 +623,33 @@ class ActiveMessageHandler:
             use_group = True
             target_group_id = self.last_active_group_id
 
-        gen_prompt = ACTIVE_MSG_GENERATE_PROMPT.format(
+        if use_group:
+            session_str = f"{actual_platform}:GroupMessage:{target_group_id}"
+            msg_type = MessageType.GROUP_MESSAGE
+        else:
+            session_str = f"{actual_platform}:FriendMessage:{specific_user_id}"
+            msg_type = MessageType.FRIEND_MESSAGE
+
+        # 格式化唤醒 Prompt 作为 Synthetic Message
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        wake_prompt = ACTIVE_MSG_WAKE_PROMPT.format(
             current_time=current_time,
             reason=reason,
-            memory_data=memory_data,
-            conversation_context=conversation_context
-            if conversation_context
-            else "（暂无最近对话记录）",
+            message_type=message_type,
         )
-
-        if use_group:
-            gen_prompt += f"\n\n注意：这条消息将发送到群聊（{target_group_id}）并 @ 用户，请以此氛围回复。"
-
-        provider_id = self.plugin.config.get("summary_provider_id")
-        try:
-            response = await self.context.llm_generate(
-                chat_provider_id=provider_id,
-                system_prompt=system_prompt,
-                prompt=gen_prompt,
-            )
-        except Exception as e:
-            logger.error(f"ActiveMessageHandler: 生成主动消息时 LLM 请求失败: {e}")
-            return
-
-        message_content = response.completion_text.strip()
-        if not message_content:
-            return
 
         logger.info(
-            f"ActiveMessageHandler: 生成主动消息：{message_content} (频道: {'群聊' if use_group else '私聊'})"
+            f"ActiveMessageHandler: 正在发送合成唤醒事件到队列 (UMO: {session_str}, Reason: {reason})"
         )
 
-        specific_user_id = self.plugin.config.get("specific_user_id")
-        if not specific_user_id:
-            return
+        # 创建 Synthetic Event 并提交到 Event Queue
+        wake_event = ActiveMessageWakeEvent(
+            context=self.context,
+            session_str=session_str,
+            message=wake_prompt,
+            sender_id=str(specific_user_id),
+            sender_name="System",
+            message_type=msg_type,
+        )
 
-        try:
-            from astrbot.api.message_components import At, Plain
-            from astrbot.core.message.message_event_result import MessageChain
-
-            # 平台兼容性处理
-            target_platform = "aiocqhttp"
-            actual_platform = "aiocqhttp"
-            if self.user_unified_origin and ":" in self.user_unified_origin:
-                raw_platform = self.user_unified_origin.split(":")[0]
-                actual_platform = raw_platform
-                if raw_platform.lower() in ["arisu", "onebot", "gocq"]:
-                    target_platform = "aiocqhttp"
-                else:
-                    target_platform = raw_platform
-
-            from astrbot.core.message.message_event_result import (
-                MessageEventResult,
-                ResultContentType,
-            )
-            from astrbot.core.pipeline.context_utils import call_event_hook
-            from astrbot.core.provider.entities import LLMResponse
-            from astrbot.core.star.star_handler import EventType
-
-            if use_group:
-                unified_origin = f"{actual_platform}:GroupMessage:{target_group_id}"
-            else:
-                unified_origin = f"{actual_platform}:FriendMessage:{specific_user_id}"
-
-            mock_event = MockEvent(unified_origin)
-            llm_response = LLMResponse(
-                role="assistant", completion_text=message_content
-            )
-            await call_event_hook(
-                mock_event, EventType.OnLLMResponseEvent, llm_response
-            )
-            message_content = llm_response.completion_text
-
-            if use_group:
-                chain = MessageChain(
-                    chain=[At(qq=specific_user_id), Plain(f" {message_content}")]
-                )
-            else:
-                chain = MessageChain().message(message_content)
-
-            result_obj = MessageEventResult()
-            result_obj.chain = chain.chain
-            result_obj.set_result_content_type(ResultContentType.LLM_RESULT)
-            mock_event.set_result(result_obj)
-
-            await call_event_hook(mock_event, EventType.OnDecoratingResultEvent)
-
-            final_chain = MessageChain(chain=mock_event.get_result().chain)
-
-            if use_group:
-                await StarTools.send_message_by_id(
-                    type="GroupMessage",
-                    id=target_group_id,
-                    message_chain=final_chain,
-                    platform=target_platform,
-                )
-
-                # 记录到群消息数据库
-                group_meta = self.db.get_group_meta(target_group_id)
-                bot_name = (
-                    group_meta[4] if group_meta and len(group_meta) > 4 else "机器人"
-                ) or "机器人"
-                msg_content_formatted = f"【你】{bot_name}: {message_content}"
-
-                new_msg_id = (group_meta[2] if group_meta else 0) + 1
-
-                self.db.add_group_message(
-                    target_group_id,
-                    new_msg_id,
-                    "bot",
-                    bot_name,
-                    msg_content_formatted,
-                    datetime.now().timestamp(),
-                    "active_msg_" + str(int(datetime.now().timestamp())),
-                    is_specific_user=True,
-                )
-                self.db.update_group_meta(
-                    target_group_id, message_id_counter=new_msg_id
-                )
-            else:
-                await StarTools.send_message_by_id(
-                    type="FriendMessage",
-                    id=specific_user_id,
-                    message_chain=final_chain,
-                    platform=target_platform,
-                )
-                # 记录到私聊数据库
-                self.db.add_private_message(
-                    str(specific_user_id),
-                    "bot",
-                    message_content,
-                    datetime.now().timestamp(),
-                )
-
-            await call_event_hook(mock_event, EventType.OnAfterMessageSentEvent)
-
-            # 统一写入对话历史（AstrBot 核心缓存）
-            if self.user_unified_origin:
-                try:
-                    # 获取当前会话正在使用的对话 ID
-                    curr_cid = await self.context.conversation_manager.get_curr_conversation_id(
-                        self.user_unified_origin
-                    )
-                    if curr_cid:
-                        conv = await self.context.conversation_manager.get_conversation(
-                            self.user_unified_origin, curr_cid
-                        )
-                        if conv:
-                            history = json.loads(conv.history)
-                            history.append(
-                                {"role": "assistant", "content": message_content}
-                            )
-                            await self.context.conversation_manager.update_conversation(
-                                self.user_unified_origin, curr_cid, history=history
-                            )
-                            logger.info(
-                                f"ActiveMessageHandler: 已将主动消息写入对话历史 (Session: {self.user_unified_origin}, CID: {curr_cid})。"
-                            )
-                except Exception as e:
-                    logger.error(
-                        f"ActiveMessageHandler: 写入对话历史失败: {e}\n{traceback.format_exc()}"
-                    )
-
-            logger.info("ActiveMessageHandler: 主动消息发送成功。")
-
-        except Exception as e:
-            logger.error(
-                f"ActiveMessageHandler: 发送主动消息失败：{e}\n{traceback.format_exc()}"
-            )
+        self.context.get_event_queue().put_nowait(wake_event)

@@ -218,10 +218,10 @@ class CommandHandler:
         yield event.plain_result(
             f"正在强行生成并发送消息（类型：{message_type}，动机：{reason}）..."
         )
-        await self.plugin.active_message_handler._generate_and_send_message(
-            reason,
-            message_type,
-            short_data="[这是强行关怀的默认短时记忆，由于直接跳过了第一步，此处短时记忆为空]",
+        await self.plugin.active_message_handler._wake_native_reply(
+            reason=reason,
+            message_type=message_type,
+            status_data="[这是强行关怀的默认短时记忆，由于直接跳过了第一步，此处短时记忆为空]",
         )
         yield event.plain_result("执行结束。如果成功，指定用户应该已经收到了主动私聊。")
 
