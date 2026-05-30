@@ -370,7 +370,7 @@ class ActiveMessageHandler:
             max_interval=max_int,
         )
 
-        logger.info(f"ActiveMessageHandler: 评估提示词详情:\n---\n{prompt}\n---")
+        logger.debug(f"ActiveMessageHandler: 评估提示词详情:\n---\n{prompt}\n---")
 
         provider_id = self.plugin.config.get("summary_provider_id")
         if not provider_id:
