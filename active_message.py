@@ -84,6 +84,7 @@ class ActiveMessageWakeEvent(AstrMessageEvent):
         sender_id: str,
         sender_name: str = "System",
         message_type: MessageType = MessageType.FRIEND_MESSAGE,
+        at_user: bool = True,
     ) -> None:
         import time
         import uuid
@@ -123,6 +124,9 @@ class ActiveMessageWakeEvent(AstrMessageEvent):
         self.context_obj = context
         self.is_at_or_wake_command = True
         self.is_wake = True
+        self.target_user_id = sender_id
+        self.at_user = at_user
+        self._at_sent = False
 
         # 设置 extra 标识为主动消息唤醒事件
         self.set_extra("is_active_message_wake", True)
@@ -130,6 +134,27 @@ class ActiveMessageWakeEvent(AstrMessageEvent):
     async def send(self, message: MessageChain) -> None:
         if message is None:
             return
+
+        if (
+            self.session.message_type == MessageType.GROUP_MESSAGE
+            and self.target_user_id
+            and self.at_user
+            and not self._at_sent
+        ):
+            from astrbot.core.message.components import At, Plain
+
+            # 避免重复 At
+            has_at = any(
+                isinstance(comp, At) and str(comp.qq) == str(self.target_user_id)
+                for comp in message.chain
+            )
+            if not has_at:
+                message.chain.insert(0, At(qq=self.target_user_id))
+                # 如果第一项后面是 Plain 文本，我们可以给 Plain 文本加个空格以改善格式
+                if len(message.chain) > 1 and isinstance(message.chain[1], Plain):
+                    message.chain[1].text = " " + message.chain[1].text.lstrip()
+            self._at_sent = True
+
         await self.context_obj.send_message(self.session, message)
         await super().send(message)
 
