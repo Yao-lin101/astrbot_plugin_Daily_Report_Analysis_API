@@ -611,7 +611,6 @@ class ActiveMessageHandler:
             current_time=current_time,
             reason=reason,
             message_type=message_type,
-            memory_data=status_data,
         )
 
         logger.info(
