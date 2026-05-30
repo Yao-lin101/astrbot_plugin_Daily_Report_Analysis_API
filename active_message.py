@@ -1,4 +1,5 @@
 import asyncio
+import json
 import random
 import re
 import traceback
@@ -426,38 +427,148 @@ class ActiveMessageHandler:
             return False
 
     async def _get_recent_conversation_context(self, limit: int = 15) -> str:
-        """获取最近的合并对话上下文（私聊+群聊中与用户的互动）并格式化为字符串"""
+        """获取最近的对话上下文（通过 AstrBot 原生对话记录构建，过滤群聊中其他用户的发言）"""
         specific_user_id = self.plugin.config.get("specific_user_id")
         if not specific_user_id:
             return "（暂无最近对话记录）"
 
+        # 1. 确定当前活跃会话 session_str
+        actual_platform = "aiocqhttp"
+        if self.user_unified_origin and ":" in self.user_unified_origin:
+            actual_platform = self.user_unified_origin.split(":")[0]
+
+        now_ts = datetime.now().timestamp()
+        use_group = False
+        target_group_id = None
+        if self.last_active_group_id and (
+            now_ts - self.last_active_time < 3600
+        ):  # 1小时内活跃则视为群聊活跃
+            use_group = True
+            target_group_id = self.last_active_group_id
+
+        if use_group:
+            session_str = f"{actual_platform}:GroupMessage:{target_group_id}"
+        else:
+            session_str = f"{actual_platform}:FriendMessage:{specific_user_id}"
+
         try:
-            # 使用合并后的记录
-            messages = self.db.get_recent_combined_messages(
-                str(specific_user_id), limit=limit
+            # 2. 从 AstrBot 获取当前会话的原生对话历史
+            curr_cid = await self.context.conversation_manager.get_curr_conversation_id(
+                session_str
             )
-            if not messages:
+            if not curr_cid:
                 return "（暂无最近对话记录）"
 
-            context_lines = []
-            for m in messages:
-                role_label = "【用户】" if m["role"] == "user" else "【你】"
-                ts = m.get("timestamp")
-                time_prefix = ""
-                if ts:
-                    time_prefix = (
-                        f"[{datetime.fromtimestamp(ts).strftime('%m-%d %H:%M')}] "
-                    )
+            conv = await self.context.conversation_manager.get_conversation(
+                session_str, curr_cid
+            )
+            if not conv or not conv.history:
+                return "（暂无最近对话记录）"
 
+            history = json.loads(conv.history)
+
+            # 3. 过滤并提取与特定用户的对话
+            filtered_messages = []
+
+            if use_group:
+                # 群聊消息过滤：
+                # - user 消息必须包含 "User ID: {specific_user_id}"
+                # - assistant 消息必须紧跟在合格的 user 消息后面
+                i = 0
+                while i < len(history):
+                    msg = history[i]
+                    role = msg.get("role")
+                    content = msg.get("content")
+
+                    if role == "user":
+                        # 检查是否包含 target user ID
+                        matched = False
+                        if isinstance(content, str):
+                            if f"User ID: {specific_user_id}" in content:
+                                matched = True
+                        elif isinstance(content, list):
+                            for part in content:
+                                if (
+                                    isinstance(part, dict)
+                                    and part.get("type") == "text"
+                                ):
+                                    if f"User ID: {specific_user_id}" in part.get(
+                                        "text", ""
+                                    ):
+                                        matched = True
+                                        break
+
+                        if matched:
+                            filtered_messages.append(
+                                {"role": "user", "content": content}
+                            )
+                            # 如果下一条是机器人回复，也抓取进来
+                            if (
+                                i + 1 < len(history)
+                                and history[i + 1].get("role") == "assistant"
+                            ):
+                                filtered_messages.append(
+                                    {
+                                        "role": "assistant",
+                                        "content": history[i + 1].get("content"),
+                                    }
+                                )
+                                i += 1  # 跳过机器人那一条，避免重复扫描
+                    i += 1
+            else:
+                # 私聊消息直接取全部
+                for msg in history:
+                    if msg.get("role") in ["user", "assistant"]:
+                        filtered_messages.append(
+                            {
+                                "role": msg.get("role"),
+                                "content": msg.get("content"),
+                            }
+                        )
+
+            # 只保留最近的 limit 条消息
+            recent_msgs = filtered_messages[-limit:]
+            if not recent_msgs:
+                return "（暂无最近对话记录）"
+
+            # 4. 格式化输出
+            context_lines = []
+            for m in recent_msgs:
+                role_label = "【用户】" if m["role"] == "user" else "【你】"
                 content = m["content"]
-                # 统一格式：去除可能存在的 【用户】Nickname: 或 【你】Nickname: 前缀，实现合并后无额外标注
-                # 这样无论是私聊还是群聊，在上下文中都呈现为 "【用户】: ..." 或 "【你】: ..."
-                clean_content = re.sub(r"^【.*?】.*?: ", "", content)
-                context_lines.append(f"{time_prefix}{role_label}: {clean_content}")
+
+                # 如果是列表多模态消息，合并文字内容
+                if isinstance(content, list):
+                    text_parts = []
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            text_parts.append(part.get("text", ""))
+                    content = "".join(text_parts)
+
+                if not isinstance(content, str):
+                    content = ""
+
+                # 去除 <system_reminder> 块和 <reasoning> 等辅助排版标记，保留纯文本
+                content = re.sub(
+                    r"<system_reminder>.*?</system_reminder>",
+                    "",
+                    content,
+                    flags=re.DOTALL,
+                )
+                content = re.sub(
+                    r"<reasoning>.*?</reasoning>", "", content, flags=re.DOTALL
+                )
+                content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+
+                # 去除可能的前缀，统一为 "【用户】: ..." 样式
+                clean_content = re.sub(r"^【.*?】.*?: ", "", content.strip())
+                if clean_content:
+                    context_lines.append(f"{role_label}: {clean_content}")
+
             return "\n".join(context_lines)
         except Exception as e:
             logger.error(
-                f"ActiveMessageHandler: 获取合并上下文失败: {e}\n{traceback.format_exc()}"
+                f"ActiveMessageHandler: 从 AstrBot 历史获取上下文失败: {e}\n{traceback.format_exc()}"
             )
             return "（暂无最近对话记录）"
 

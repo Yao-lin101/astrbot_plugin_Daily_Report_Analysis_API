@@ -503,6 +503,22 @@ class DailyReportAnalysisAPI(Star):
         if event.get_extra("is_active_message_wake"):
             request.conversation = None
             return
+
+        # 检测是否为特定用户的 LLM 交互，如果是，则更新活动状态并重置主动消息的轮询
+        sender_id = str(event.get_sender_id())
+        specific_user_id = str(self.config.get("specific_user_id", ""))
+        group_id = (
+            str(event.message_obj.group_id)
+            if event.message_obj.group_id is not None
+            else None
+        )
+
+        if specific_user_id and sender_id == specific_user_id:
+            if self.active_message_handler:
+                self.active_message_handler.reset_polling(reason="用户活跃(LLM互动)")
+                self.active_message_handler.update_user_activity(
+                    group_id=group_id, unified_origin=event.unified_msg_origin
+                )
         row_id = event.get_extra("report_db_row_id")
         table_name = event.get_extra("report_db_table")
         if not row_id or not table_name:
