@@ -559,6 +559,12 @@ class ActiveMessageHandler:
                     r"<reasoning>.*?</reasoning>", "", content, flags=re.DOTALL
                 )
                 content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+                content = re.sub(
+                    r"<RAG-Faiss-Memory>.*?</RAG-Faiss-Memory>",
+                    "",
+                    content,
+                    flags=re.DOTALL,
+                )
 
                 # 去除可能的前缀，统一为 "【用户】: ..." 样式
                 clean_content = re.sub(r"^【.*?】.*?: ", "", content.strip())
