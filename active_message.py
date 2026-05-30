@@ -11,7 +11,6 @@ from astrbot.core.star.star_tools import StarTools
 from .prompts import (
     ACTIVE_MSG_CHECK_STATUS_PROMPT,
     ACTIVE_MSG_GENERATE_PROMPT,
-    ACTIVE_MSG_PREDICT_TIME_PROMPT,
 )
 
 
@@ -252,60 +251,6 @@ class ActiveMessageHandler:
 
         return parse_json_robust(raw_result)
 
-    async def _predict_first_active_time(self, now: datetime):
-        logger.info("ActiveMessageHandler: 正在获取作息推测今日首次活动时间...")
-        status_res = await self.api_service.fetch_status(memory="short")
-        if not status_res or "prompt" not in status_res:
-            logger.error("ActiveMessageHandler: 无法获取 short 状态，30分钟后重试。")
-            self.next_check_time = now + timedelta(minutes=30)
-            return
-
-        status_data = status_res["prompt"]
-        system_prompt = await self._get_system_prompt()
-        prompt = ACTIVE_MSG_PREDICT_TIME_PROMPT.format(status_data=status_data)
-
-        provider_id = self.plugin.config.get("summary_provider_id")
-        if not provider_id:
-            logger.warning(
-                "ActiveMessageHandler: 未配置 summary_provider_id，无法推测。"
-            )
-            self.next_check_time = now + timedelta(minutes=60)
-            return
-
-        try:
-            response = await self.context.llm_generate(
-                chat_provider_id=provider_id,
-                system_prompt=system_prompt,
-                prompt=prompt,
-            )
-        except Exception as e:
-            logger.warning(f"ActiveMessageHandler: 推测活跃时间时 LLM 请求失败: {e}")
-            self.next_check_time = now + timedelta(minutes=60)
-            return
-
-        try:
-            result_json = self._parse_json(response.completion_text)
-            time_str = result_json.get("next_check_time", "")
-            if ":" in time_str:
-                h, m = map(int, time_str.split(":"))
-                check_time = now.replace(hour=h, minute=m, second=0, microsecond=0)
-                if check_time <= now:
-                    # 如果推测的时间比现在早，且时间差超过 12 小时（比如现在是深夜，推测明天早上的活动），则算作明天
-                    # 否则（比如现在是早上 10 点，推测 8 点半），说明是今天的活动时间被错过了，保留为今天以便系统立刻触发补偿检查
-                    if (now - check_time).total_seconds() > 12 * 3600:
-                        check_time += timedelta(days=1)
-                self.next_check_time = check_time
-                logger.info(
-                    f"ActiveMessageHandler: 推测出下一次活动时间为 {self.next_check_time}"
-                )
-            else:
-                raise ValueError("Invalid time format")
-        except Exception as e:
-            logger.error(
-                f"ActiveMessageHandler: 推测时间失败 {e}。LLM 返回: {response.completion_text}"
-            )
-            self.next_check_time = now + timedelta(minutes=60)
-
     async def _check_and_action(self):
         logger.info("ActiveMessageHandler: 到达观察时间，正在评估状态...")
         status_res = await self.api_service.fetch_status(memory="short")
@@ -412,32 +357,6 @@ class ActiveMessageHandler:
                 f"ActiveMessageHandler: 解析评估状态失败 {e}。LLM 返回: {response.completion_text if 'response' in locals() else 'No response'}"
             )
             return False
-
-    def _clean_message_content(self, content):
-        """清洗消息内容，去除 think 块、system_reminder 和 JSON 结构"""
-        if isinstance(content, list):
-            # 处理 AstrBot 的组件化消息格式
-            text_parts = []
-            for part in content:
-                if isinstance(part, dict):
-                    if part.get("type") == "text":
-                        text_parts.append(part.get("text", ""))
-                    # 忽略 type 为 think 的部分
-                elif isinstance(part, str):
-                    text_parts.append(part)
-            content = "".join(text_parts)
-
-        if not isinstance(content, str):
-            return ""
-
-        # 去除 <system_reminder>...</system_reminder> 及其内容
-        content = re.sub(
-            r"<system_reminder>.*?</system_reminder>", "", content, flags=re.DOTALL
-        )
-        # 去除可能的 Markdown 思考块
-        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
-
-        return content.strip()
 
     async def _get_recent_conversation_context(self, limit: int = 15) -> str:
         """获取最近的合并对话上下文（私聊+群聊中与用户的互动）并格式化为字符串"""

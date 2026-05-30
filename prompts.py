@@ -83,19 +83,6 @@ ACTIVE_MSG_CHECK_STATUS_PROMPT = """任务目标：结合当前系统时间、�
 {conversation_context}
 """
 
-ACTIVE_MSG_PREDICT_TIME_PROMPT = """任务目标：根据以下角色的历史活动记录，推测用户今日开始活跃的大致时间。
-请分析用户平时的起床时间、开始使用手机/电脑的时间等规律，给出一个合理的观察启动时间。
-
-输出 JSON 格式要求（必须只返回合法的 JSON 对象，不带 Markdown 符号等包裹）：
-{{
-  "reason": "以你的人设口吻，说明你的推测依据...'）",
-  "next_check_time": "08:00" // 格式为 HH:MM，24小时制
-}}
-
---- 状态记录开始 ---
-{status_data}
---- 状态记录结束 ---"""
-
 ACTIVE_MSG_GENERATE_PROMPT = """任务目标：根据你的人设、实时状态及历史记忆，结合当前系统时间，主动给用户发一条消息。
 
 --- 基础信息 ---
