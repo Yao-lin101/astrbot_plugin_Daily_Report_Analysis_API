@@ -76,13 +76,7 @@ def get_headers(display_code: str = None):
     return headers
 
 
-@mcp.tool(
-    description=(
-        "【角色列表工具】获取当前 StillAlive 平台上活跃的角色列表（过滤掉 24 小时内无活跃记录的角色）。"
-        "当用户询问“有哪些人”、“谁在线”或你无法确定用户指的是哪个角色时调用此工具。"
-        "输出格式：1、昵称：展示码："
-    )
-)
+@mcp.tool(description="获取 StillAlive 平台上 24 小时内活跃的角色列表。")
 async def get_character_list() -> str:
     url = f"{BASE_URL}/api/v1/survivors/"
     async with httpx.AsyncClient(timeout=10.0) as client:
@@ -129,11 +123,14 @@ async def get_character_list() -> str:
 
 
 @mcp.tool(
-    description=(
-        "【核心状态工具】获取指定角色的真实实时数据。包含步数、电量、当前 App、位置及今日日报 Markdown。"
-        "LLM 应当优先通过上下文或以下配置判断 display_code。"
-        f"{CHAR_PROMPT}"
-    )
+    description="获取当前系统配置的 StillAlive 角色列表（包含昵称、别名、展示码及用户ID），用于查找或匹配角色信息。"
+)
+async def get_configured_characters() -> str:
+    return get_character_info_prompt()
+
+
+@mcp.tool(
+    description="获取指定展示码（display_code）的 StillAlive 角色真实实时数据（包含步数、电量、当前 App、位置等）及今日日报。"
 )
 async def get_character_status(display_code: str) -> str:
     """
@@ -290,11 +287,7 @@ async def get_character_status(display_code: str) -> str:
 
 
 @mcp.tool(
-    description=(
-        "【长期记忆检索】通过语义搜索指定角色的长时记忆档案、过去发生的事件或话题偏好。"
-        "此工具完全基于角色密钥进行身份识别。LLM 应当根据角色昵称从以下配置中选择对应的 display_code 以获取其密钥进行查询。"
-        f"{CHAR_PROMPT}"
-    )
+    description="通过语义搜索指定展示码（display_code）的 StillAlive 角色长时记忆档案、过去发生的事件或话题偏好。"
 )
 async def search_historical_memory(display_code: str, query: str) -> str:
     """
