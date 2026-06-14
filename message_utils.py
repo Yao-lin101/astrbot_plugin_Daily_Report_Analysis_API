@@ -117,8 +117,67 @@ async def format_full_message(
 
 
 def parse_json_robust(raw_result: str) -> dict:
-    """Robustly parse JSON from LLM response, stripping markdown formatting and extra tags/text."""
+    """Robustly parse JSON from LLM response, stripping markdown formatting and extra tags/text.
+
+    Args:
+        raw_result: The raw string response from the LLM.
+
+    Returns:
+        The parsed JSON dictionary.
+
+    Raises:
+        json.JSONDecodeError: If the string cannot be parsed as JSON even after cleanups.
+    """
     import json
+
+    def _fix_unescaped_quotes(json_str: str) -> str:
+        """Escape unescaped double quotes inside JSON string values.
+
+        Args:
+            json_str: The JSON string to repair.
+
+        Returns:
+            The repaired JSON string with internal double quotes escaped.
+        """
+        result = []
+        in_string = False
+        escape = False
+        i = 0
+        n = len(json_str)
+        while i < n:
+            char = json_str[i]
+            if in_string:
+                if escape:
+                    result.append(char)
+                    escape = False
+                elif char == "\\":
+                    result.append(char)
+                    escape = True
+                elif char == '"':
+                    # Check if this double quote is followed by structural characters:
+                    # skip whitespace first
+                    next_idx = i + 1
+                    while next_idx < n and json_str[next_idx].isspace():
+                        next_idx += 1
+
+                    # What can follow a string in valid JSON?
+                    # - ':' (if it was a key)
+                    # - ',' (if it was a value/element or key-value pair separator)
+                    # - '}' (end of object)
+                    # - ']' (end of array)
+                    if next_idx < n and json_str[next_idx] in (":", ",", "}", "]"):
+                        result.append(char)
+                        in_string = False
+                    else:
+                        result.append('\\"')
+                else:
+                    result.append(char)
+            else:
+                if char == '"':
+                    in_string = True
+                result.append(char)
+            i += 1
+        return "".join(result)
 
     raw_result = raw_result.strip()
 
@@ -136,6 +195,13 @@ def parse_json_robust(raw_result: str) -> dict:
     try:
         return json.loads(raw_result)
     except json.JSONDecodeError as e:
+        # Try repairing quotes
+        try:
+            fixed = _fix_unescaped_quotes(raw_result)
+            return json.loads(fixed)
+        except json.JSONDecodeError:
+            pass
+
         # 3. Fallback: find first '{' and try parsing from largest matching closing brace
         start_idx = raw_result.find("{")
         if start_idx != -1:
@@ -143,7 +209,12 @@ def parse_json_robust(raw_result: str) -> dict:
             for end_idx in reversed(indices):
                 if end_idx > start_idx:
                     try:
-                        return json.loads(raw_result[start_idx : end_idx + 1])
+                        candidate = raw_result[start_idx : end_idx + 1]
+                        try:
+                            return json.loads(candidate)
+                        except json.JSONDecodeError:
+                            fixed_candidate = _fix_unescaped_quotes(candidate)
+                            return json.loads(fixed_candidate)
                     except json.JSONDecodeError:
                         continue
 
@@ -154,7 +225,12 @@ def parse_json_robust(raw_result: str) -> dict:
             for end_arr in reversed(indices):
                 if end_arr > start_arr:
                     try:
-                        return json.loads(raw_result[start_arr : end_arr + 1])
+                        candidate = raw_result[start_arr : end_arr + 1]
+                        try:
+                            return json.loads(candidate)
+                        except json.JSONDecodeError:
+                            fixed_candidate = _fix_unescaped_quotes(candidate)
+                            return json.loads(fixed_candidate)
                     except json.JSONDecodeError:
                         continue
 
