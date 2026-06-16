@@ -377,3 +377,80 @@ class Storage:
                 (limit,),
             )
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_all_groups(self) -> list:
+        """Get all group IDs stored in group metadata.
+
+        Returns:
+            A list of group ID strings.
+        """
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT group_id FROM group_meta")
+            return [row[0] for row in cursor.fetchall()]
+
+    def advance_group_backlog_to_today(self, group_id: str, today_0: float) -> int:
+        """Advance the last summarized group message ID to today's 0:00.
+
+        This effectively skips historical backlog messages from previous days.
+
+        Args:
+            group_id: The ID of the group chat.
+            today_0: Timestamp representing today's 0:00.
+
+        Returns:
+            The message ID advanced to, or 0 if no advancement occurred.
+        """
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT MAX(msg_id_in_group) FROM group_messages WHERE group_id = ? AND timestamp < ?",
+                (group_id, today_0)
+            )
+            row = cursor.fetchone()
+            max_id_before_today = row[0] if row and row[0] is not None else 0
+            if max_id_before_today > 0:
+                cursor.execute("SELECT last_summarized_id FROM group_meta WHERE group_id = ?", (group_id,))
+                meta_row = cursor.fetchone()
+                current_last_id = meta_row[0] if meta_row else 0
+                if max_id_before_today > current_last_id:
+                    cursor.execute(
+                        "UPDATE group_meta SET last_summarized_id = ? WHERE group_id = ?",
+                        (max_id_before_today, group_id)
+                    )
+                    conn.commit()
+                    return max_id_before_today
+        return 0
+
+    def advance_private_backlog_to_today(self, user_id: str, today_0: float) -> int:
+        """Advance the last summarized private message ID to today's 0:00.
+
+        This effectively skips historical backlog private messages from previous days.
+
+        Args:
+            user_id: The ID of the user.
+            today_0: Timestamp representing today's 0:00.
+
+        Returns:
+            The message ID advanced to, or 0 if no advancement occurred.
+        """
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT MAX(id) FROM private_messages WHERE user_id = ? AND timestamp < ?",
+                (user_id, today_0)
+            )
+            row = cursor.fetchone()
+            max_id_before_today = row[0] if row and row[0] is not None else 0
+            if max_id_before_today > 0:
+                cursor.execute("SELECT value FROM plugin_meta WHERE key = 'last_private_summarized_id'")
+                meta_row = cursor.fetchone()
+                current_last_id = int(meta_row[0]) if meta_row and meta_row[0] else 0
+                if max_id_before_today > current_last_id:
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO plugin_meta (key, value) VALUES ('last_private_summarized_id', ?)",
+                        (str(max_id_before_today),)
+                    )
+                    conn.commit()
+                    return max_id_before_today
+        return 0

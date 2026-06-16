@@ -58,6 +58,7 @@ class DailyReportAnalysisAPI(Star):
         self.cmd_handler = None
 
         self.internal_commands = []
+        self.cleanup_task = None
 
         # 自动同步配置到 JSON 文件，供 MCP 服务器读取
         self._sync_config_to_json()
@@ -119,6 +120,9 @@ class DailyReportAnalysisAPI(Star):
         # 自动识别插件内注册的所有指令名
         self._auto_collect_internal_commands()
 
+        self.cleanup_task = asyncio.create_task(self._cleanup_loop())
+        await self._startup_backlog_check()
+
         logger.info(
             f"DailyReportAnalysisAPI: 插件已初始化。监控用户ID: {self.config.get('specific_user_id')}, 已自动注册屏蔽指令: {self.internal_commands}"
         )
@@ -157,6 +161,8 @@ class DailyReportAnalysisAPI(Star):
             self.private_timer.cancel()
         if self.active_message_handler:
             self.active_message_handler.stop()
+        if self.cleanup_task:
+            self.cleanup_task.cancel()
 
     def _get_group_name(self, event: AstrMessageEvent) -> str | None:
         """获取群名称"""
@@ -341,7 +347,7 @@ class DailyReportAnalysisAPI(Star):
                 {"id": msg_id, "content": msg_content_formatted, "sender_id": sender_id}
             )
 
-            if is_specific_user:
+            if is_it_you:
                 has_substance = any(
                     (isinstance(comp, Plain) and comp.text.strip())
                     or isinstance(comp, At)
@@ -553,3 +559,85 @@ class DailyReportAnalysisAPI(Star):
         prefix = event.get_extra("report_prefix") or ""
         self.db.update_message_content(table_name, row_id, f"{prefix}{rich_content}")
         logger.debug(f"DailyReportAnalysisAPI: 已更新消息 ID {row_id} 的富文本内容。")
+
+    async def _cleanup_loop(self):
+        """Periodically clean up database messages older than 7 days.
+
+        Runs in a background loop every 24 hours.
+        """
+        try:
+            while True:
+                logger.info("DailyReportAnalysisAPI: Running database cleanup task...")
+                try:
+                    self.db.clean_old_messages(days=7)
+                except Exception as e:
+                    logger.error(f"DailyReportAnalysisAPI: Failed to clean old messages: {e}")
+                await asyncio.sleep(86400)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"DailyReportAnalysisAPI: Cleanup loop encountered an error: {e}")
+
+    async def _startup_backlog_check(self):
+        """Check for and handle message backlogs on startup.
+
+        This method advances the database markers past historical messages from
+        previous days to avoid processing them, and schedules immediate summary
+        tasks for any unsummarized messages sent today.
+        """
+        try:
+            specific_user_id = str(self.config.get("specific_user_id", ""))
+            if not specific_user_id:
+                return
+
+            # Today's 0:00 local time timestamp
+            today_0 = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+
+            # 1. Process group backlogs
+            groups = self.db.get_all_groups()
+            for group_id in groups:
+                # Advance progress to today's 0:00 (skipping older messages)
+                self.db.advance_group_backlog_to_today(group_id, today_0)
+
+                # Initialize local context cache
+                if group_id not in self.last_summarized_id:
+                    self._get_group_context(group_id)
+
+                # Check if there are any remaining pending messages from today
+                last_id = self.last_summarized_id.get(group_id, 0)
+                pending = self.db.get_pending_messages(group_id, last_id, limit=1)
+                if pending:
+                    # Check if the specific user spoke today
+                    all_pending = self.db.get_pending_messages(group_id, last_id, limit=200)
+                    has_specific_user = any(
+                        str(m.get("sender_id")) == specific_user_id for m in all_pending
+                    )
+                    if has_specific_user:
+                        self.group_task_ids[group_id] += 1
+                        current_task_id = self.group_task_ids[group_id]
+                        self.group_timers[group_id] = asyncio.create_task(
+                            self._delay_summarize_task(group_id, 5, current_task_id)
+                        )
+                        logger.info(
+                            f"DailyReportAnalysisAPI: Found today's backlog for group {group_id}. Scheduled summary in 5s."
+                        )
+
+            # 2. Process private message backlog
+            self.db.advance_private_backlog_to_today(specific_user_id, today_0)
+            last_private_id_str = self.db.get_plugin_meta("last_private_summarized_id", "0")
+            last_private_id = int(last_private_id_str)
+            pending_private = self.db.get_pending_private_messages(
+                specific_user_id, last_private_id, limit=1
+            )
+            if pending_private:
+                self.private_task_id += 1
+                current_task_id = self.private_task_id
+                self.private_timer = asyncio.create_task(
+                    self._delay_private_summary_task(5, current_task_id)
+                )
+                logger.info(
+                    f"DailyReportAnalysisAPI: Found today's private message backlog. Scheduled summary in 5s."
+                )
+
+        except Exception as e:
+            logger.error(f"DailyReportAnalysisAPI: Startup backlog check failed: {e}")
