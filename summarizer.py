@@ -48,12 +48,13 @@ class Summarizer:
             logger.info(
                 f"DailyReportAnalysisAPI: 该批次待处理消息中无特定用户发言，安全推进进度至 ID={new_last_id}"
             )
-            self._check_and_trigger_next_backlog(group_id)
+            self._check_and_trigger_next_backlog(group_id, new_last_id)
             return
 
         # 优化：向前追溯背景，避免无关消息干扰（保留用户首条发言前 15 条消息）
         context_start = max(0, first_user_msg_index - 15)
         to_summarize = pending[context_start:]
+        max_valid_id = to_summarize[-1]["id"]
 
         # 严格连续消息预合并
         merged_messages = []
@@ -131,7 +132,6 @@ class Summarizer:
                 next_start_id = result_json.get("next_start_id", to_summarize[-1]["id"])
 
                 # --- 安全检查：防止 LLM 幻觉导致 ID 越界 ---
-                max_valid_id = to_summarize[-1]["id"]
                 min_valid_id = to_summarize[0]["id"]
 
                 if not isinstance(next_start_id, int):
@@ -139,6 +139,12 @@ class Summarizer:
                         next_start_id = int(next_start_id)
                     except (ValueError, TypeError):
                         next_start_id = max_valid_id + 1
+
+                # Adjust next_start_id based on LLM status to prevent loops
+                if status == "IGNORED":
+                    next_start_id = max_valid_id + 1
+                elif status == "COMPLETED" and next_start_id == max_valid_id:
+                    next_start_id = max_valid_id + 1
 
                 if next_start_id > max_valid_id + 1:
                     logger.warning(
@@ -217,18 +223,27 @@ class Summarizer:
             except Exception as e:
                 logger.error(f"DailyReportAnalysisAPI: 总结处理失败: {e}")
                 # 出现异常时也安全推进，防止卡死
-                self.plugin.last_summarized_id[group_id] = to_summarize[-1]["id"]
-                self.db.update_group_meta(
-                    group_id, last_summarized_id=to_summarize[-1]["id"]
-                )
+                self.plugin.last_summarized_id[group_id] = max_valid_id
+                self.db.update_group_meta(group_id, last_summarized_id=max_valid_id)
 
         self.plugin.active_groups.discard(group_id)
-        self._check_and_trigger_next_backlog(group_id)
+        self._check_and_trigger_next_backlog(group_id, max_valid_id)
 
-    def _check_and_trigger_next_backlog(self, group_id):
-        """检查是否有积压消息，并调度下一次总结"""
-        current_last_id = self.plugin.last_summarized_id.get(group_id, 0)
-        next_pending = self.db.get_pending_messages(group_id, current_last_id, limit=1)
+    def _check_and_trigger_next_backlog(
+        self, group_id: str, max_valid_id: int | None = None
+    ):
+        """Check if there are backlog messages and schedule the next summary task.
+
+        Args:
+            group_id: The ID of the group chat.
+            max_valid_id: The maximum message ID in the batch that has been processed.
+        """
+        check_id = (
+            max_valid_id
+            if max_valid_id is not None
+            else self.plugin.last_summarized_id.get(group_id, 0)
+        )
+        next_pending = self.db.get_pending_messages(group_id, check_id, limit=1)
         if next_pending:
             self.plugin.group_task_ids[group_id] += 1
             current_task_id = self.plugin.group_task_ids[group_id]
