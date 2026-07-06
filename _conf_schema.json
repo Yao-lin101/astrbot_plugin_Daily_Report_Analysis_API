@@ -63,5 +63,36 @@
     "type": "list",
     "hint": "只在该列表中的群聊记录并进行话题总结。留空则处理所有群聊。请填写群号。",
     "default": []
+  },
+  "characters": {
+    "type": "template_list",
+    "description": "查询角色列表",
+    "hint": "配置要查询的角色列表，每个角色可以设置独立名称、展示码和检索秘钥",
+    "default": [],
+    "templates": {
+      "character_template": {
+        "name": "角色配置",
+        "items": {
+          "name": {
+            "type": "string",
+            "description": "角色名称",
+            "hint": "用于在工具中识别的唯一名称（例如：爱丽丝）",
+            "default": ""
+          },
+          "display_code": {
+            "type": "string",
+            "description": "展示码",
+            "hint": "该角色对应的 StillAlive 展示码",
+            "default": ""
+          },
+          "key": {
+            "type": "string",
+            "description": "检索秘钥 (可选)",
+            "hint": "该角色长时记忆库的秘钥（如不配置，则无法使用记忆检索功能）",
+            "default": ""
+          }
+        }
+      }
+    }
   }
 }

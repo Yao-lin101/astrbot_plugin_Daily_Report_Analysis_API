@@ -5,7 +5,7 @@ import os
 from collections import defaultdict, deque
 from datetime import datetime
 
-from astrbot.api import logger
+from astrbot.api import llm_tool, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.message_components import At, Image, Plain, Reply
 from astrbot.api.star import Context, Star, StarTools, register
@@ -114,6 +114,12 @@ class DailyReportAnalysisAPI(Star):
 
         self.cleanup_task = asyncio.create_task(self._cleanup_loop())
         await self._startup_backlog_check()
+
+        # 动态更新 LLM 工具描述
+        try:
+            self.update_tool_descriptions()
+        except Exception as e:
+            logger.error(f"DailyReportAnalysisAPI: 动态更新工具描述失败: {e}")
 
         logger.info(
             f"DailyReportAnalysisAPI: 插件已初始化。监控用户ID: {self.config.get('specific_user_id')}, 已自动注册屏蔽指令: {self.internal_commands}"
@@ -645,3 +651,59 @@ class DailyReportAnalysisAPI(Star):
 
         except Exception as e:
             logger.error(f"DailyReportAnalysisAPI: Startup backlog check failed: {e}")
+
+    def update_tool_descriptions(self) -> None:
+        """根据配置的角色列表动态更新 LLM 工具描述。
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
+        characters = self.config.get("characters", [])
+        status_names = "或".join([c.get("name") for c in characters if c.get("name")])
+        memory_names = "或".join(
+            [c.get("name") for c in characters if c.get("name") and c.get("key")]
+        )
+
+        tool_mgr = self.context.get_llm_tool_manager()
+
+        status_tool = tool_mgr.get_func("get_stillalive_status")
+        if status_tool:
+            if status_names:
+                status_tool.description = f"可获取{status_names}的真实实时数据（包含步数、电量、当前 App、位置等）及今日日报。"
+            else:
+                status_tool.description = "可获取已配置角色的真实实时数据（包含步数、电量、当前 App、位置等）及今日日报。"
+
+        memory_tool = tool_mgr.get_func("search_stillalive_memory")
+        if memory_tool:
+            if memory_names:
+                memory_tool.description = f"通过语义搜索{memory_names}长时记忆档案、过去发生的事件或话题偏好。"
+            else:
+                memory_tool.description = "通过语义搜索已配置秘钥角色的长时记忆档案、过去发生的事件或话题偏好。"
+
+    @llm_tool(name="get_stillalive_status")
+    async def get_stillalive_status(self, event: AstrMessageEvent, name: str) -> str:
+        """获取指定角色的真实实时数据（包含步数、电量、当前 App、位置等）及今日日报。
+
+        Args:
+            name(string): 角色名称
+        """
+        from .llm_tools import get_stillalive_status_impl
+
+        return await get_stillalive_status_impl(self, event, name)
+
+    @llm_tool(name="search_stillalive_memory")
+    async def search_stillalive_memory(
+        self, event: AstrMessageEvent, name: str, query: str
+    ) -> str:
+        """通过语义搜索角色的长时记忆档案、过去发生的事件或话题偏好。
+
+        Args:
+            name(string): 角色名称
+            query(string): 检索词
+        """
+        from .llm_tools import search_stillalive_memory_impl
+
+        return await search_stillalive_memory_impl(self, event, name, query)
