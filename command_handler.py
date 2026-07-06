@@ -3,6 +3,22 @@ from datetime import datetime
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
+RESPONSES = {
+    "resp_permission_denied": "只有获得授权老师才能使用这个技能呢。爱丽丝感到很抱歉！",
+    "resp_invalid_date": "呜哇，任务失败了。爱丽丝无法识别这个日期格式，请使用 YYYY-MM-DD 格式（例如：stillalive日报 2026-05-03）再试一次吧！",
+    "resp_daily_not_found": "寻找任务目标失败。在 {date} 的地图里没有找到任何日报记录呢，爱丽丝建议老师再等一等！",
+    "resp_daily_conn_error": "连接冒险数据库失败！爱丽丝无法获取 {date} 的日报信息，请检查网络连接！",
+    "resp_daily_success": "已经为老师准备好 {date} 的冒险日志了！\n查看地址：{url}",
+    "resp_daily_unknown_error": "获取日报时触发了未知陷阱：{error}。爱丽丝正在尝试修复！",
+    "resp_render_error": "爱丽丝在渲染图片时 MP 不足了……生成图片失败，请检查冒险日志（后台日志）！",
+    "resp_image_file_not_found": "寻找道具失败！爱丽丝渲染出的图片文件在背包里找不到了。",
+    "resp_image_transmit_error": "爱丽丝在传送图片时被干扰了：{error}",
+    "resp_group_only": "该指令只有在群聊副本中才能释放哦！",
+    "resp_no_specific_user": "在当前的冒险记录中，没有发现老师踪迹，爱丽丝无法进行总结呢。",
+    "resp_summary_start": "爱丽丝正在努力分析冒险记录，请稍等片刻...",
+    "resp_summary_success": "话题总结任务完成！已经同步到冒险大厅（服务端）了！",
+}
+
 
 class CommandHandler:
     def __init__(self, plugin):
@@ -19,8 +35,17 @@ class CommandHandler:
         return sender_id == specific_user_id
 
     def _get_resp(self, key: str, default: str = "", **kwargs) -> str:
-        """从配置获取回复模板并格式化"""
-        tmpl = self.config.get(key, default)
+        """从硬编码回复模板字典中获取模板并格式化。
+
+        Args:
+            key: 回复模板的键名。
+            default: 未找到对应键名时返回的默认字符串。
+            kwargs: 格式化参数。
+
+        Returns:
+            格式化后的回复字符串。
+        """
+        tmpl = RESPONSES.get(key, default)
         try:
             return tmpl.format(**kwargs)
         except Exception:

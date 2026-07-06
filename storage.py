@@ -405,18 +405,21 @@ class Storage:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT MAX(msg_id_in_group) FROM group_messages WHERE group_id = ? AND timestamp < ?",
-                (group_id, today_0)
+                (group_id, today_0),
             )
             row = cursor.fetchone()
             max_id_before_today = row[0] if row and row[0] is not None else 0
             if max_id_before_today > 0:
-                cursor.execute("SELECT last_summarized_id FROM group_meta WHERE group_id = ?", (group_id,))
+                cursor.execute(
+                    "SELECT last_summarized_id FROM group_meta WHERE group_id = ?",
+                    (group_id,),
+                )
                 meta_row = cursor.fetchone()
                 current_last_id = meta_row[0] if meta_row else 0
                 if max_id_before_today > current_last_id:
                     cursor.execute(
                         "UPDATE group_meta SET last_summarized_id = ? WHERE group_id = ?",
-                        (max_id_before_today, group_id)
+                        (max_id_before_today, group_id),
                     )
                     conn.commit()
                     return max_id_before_today
@@ -438,18 +441,20 @@ class Storage:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT MAX(id) FROM private_messages WHERE user_id = ? AND timestamp < ?",
-                (user_id, today_0)
+                (user_id, today_0),
             )
             row = cursor.fetchone()
             max_id_before_today = row[0] if row and row[0] is not None else 0
             if max_id_before_today > 0:
-                cursor.execute("SELECT value FROM plugin_meta WHERE key = 'last_private_summarized_id'")
+                cursor.execute(
+                    "SELECT value FROM plugin_meta WHERE key = 'last_private_summarized_id'"
+                )
                 meta_row = cursor.fetchone()
                 current_last_id = int(meta_row[0]) if meta_row and meta_row[0] else 0
                 if max_id_before_today > current_last_id:
                     cursor.execute(
                         "INSERT OR REPLACE INTO plugin_meta (key, value) VALUES ('last_private_summarized_id', ?)",
-                        (str(max_id_before_today),)
+                        (str(max_id_before_today),),
                     )
                     conn.commit()
                     return max_id_before_today

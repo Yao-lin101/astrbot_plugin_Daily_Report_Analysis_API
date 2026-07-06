@@ -92,14 +92,6 @@ class DailyReportAnalysisAPI(Star):
             self.user_nicknames[group_id] = "用户"
             self.bot_nicknames[group_id] = "机器人"
 
-    def _get_resp(self, key: str, default: str = "", **kwargs) -> str:
-        """从配置获取回复模板并格式化"""
-        tmpl = self.config.get(key, default)
-        try:
-            return tmpl.format(**kwargs)
-        except Exception:
-            return tmpl
-
     async def initialize(self):
         """插件初始化"""
         if not self.config:
@@ -571,12 +563,16 @@ class DailyReportAnalysisAPI(Star):
                 try:
                     self.db.clean_old_messages(days=7)
                 except Exception as e:
-                    logger.error(f"DailyReportAnalysisAPI: Failed to clean old messages: {e}")
+                    logger.error(
+                        f"DailyReportAnalysisAPI: Failed to clean old messages: {e}"
+                    )
                 await asyncio.sleep(86400)
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"DailyReportAnalysisAPI: Cleanup loop encountered an error: {e}")
+            logger.error(
+                f"DailyReportAnalysisAPI: Cleanup loop encountered an error: {e}"
+            )
 
     async def _startup_backlog_check(self):
         """Check for and handle message backlogs on startup.
@@ -591,7 +587,11 @@ class DailyReportAnalysisAPI(Star):
                 return
 
             # Today's 0:00 local time timestamp
-            today_0 = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+            today_0 = (
+                datetime.now()
+                .replace(hour=0, minute=0, second=0, microsecond=0)
+                .timestamp()
+            )
 
             # 1. Process group backlogs
             groups = self.db.get_all_groups()
@@ -608,7 +608,9 @@ class DailyReportAnalysisAPI(Star):
                 pending = self.db.get_pending_messages(group_id, last_id, limit=1)
                 if pending:
                     # Check if the specific user spoke today
-                    all_pending = self.db.get_pending_messages(group_id, last_id, limit=200)
+                    all_pending = self.db.get_pending_messages(
+                        group_id, last_id, limit=200
+                    )
                     has_specific_user = any(
                         str(m.get("sender_id")) == specific_user_id for m in all_pending
                     )
@@ -624,7 +626,9 @@ class DailyReportAnalysisAPI(Star):
 
             # 2. Process private message backlog
             self.db.advance_private_backlog_to_today(specific_user_id, today_0)
-            last_private_id_str = self.db.get_plugin_meta("last_private_summarized_id", "0")
+            last_private_id_str = self.db.get_plugin_meta(
+                "last_private_summarized_id", "0"
+            )
             last_private_id = int(last_private_id_str)
             pending_private = self.db.get_pending_private_messages(
                 specific_user_id, last_private_id, limit=1
@@ -636,7 +640,7 @@ class DailyReportAnalysisAPI(Star):
                     self._delay_private_summary_task(5, current_task_id)
                 )
                 logger.info(
-                    f"DailyReportAnalysisAPI: Found today's private message backlog. Scheduled summary in 5s."
+                    "DailyReportAnalysisAPI: Found today's private message backlog. Scheduled summary in 5s."
                 )
 
         except Exception as e:
